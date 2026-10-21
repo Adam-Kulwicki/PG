@@ -1,0 +1,105 @@
+name: Backend Docker CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-docker.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-docker.yml'
+
+# Globalne ustawienia dla GitHub Registry
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: bankrut-backend
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+defaults:
+  run:
+    working-directory: ./backend
+
+jobs:
+  build-and-test:
+    permissions:
+      contents: read
+
+    name: Testy i walidacja Rusta
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      - name: Zainstaluj Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache zależności Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./backend -> target"
+
+      - name: Sprawdź formatowanie i clippy
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+
+      - name: Uruchom testy
+        run: cargo test --locked
+
+  push-to-ghcr:
+    name: Budowa i publikacja obrazu Docker
+    needs: build-and-test
+    # Wyślij obraz na GHCR tylko przy pushu nie przy zwykłym Pull Requeście
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    
+    # Wymagane uprawnienia do zapisu w GitHub Packages
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Pobierz kod
+        uses: actions/checkout@v4
+
+      # Konfiguracja Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Logowanie do rejestru GitHub (GHCR) za pomocą tokena akcji
+      - name: Logowanie do GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Wyciąganie etykiet (np. tagu gałęzi main lub develop)
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=branch
+
+      # Budowanie i wypychanie obrazu do rejestru
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

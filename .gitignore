@@ -1,0 +1,11 @@
+# BACKEND
+/backend/target/*
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# PLIKI ENV
+.env
+.env.*

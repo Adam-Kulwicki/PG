@@ -1,19 +1,17 @@
 use axum::{
     routing::get,
     Router,
-    Json
 };
 
-use serde_json::{
-    json, 
-    Value};
+mod endpoints;
+use endpoints::matches::matches;
 
 #[tokio::main]
 async fn main() {
     // Definicja routingu
     let app = Router::new()
     .route("/", get(root))
-    .route("/api", get(json));
+    .route("/matches", get(matches));
     
 
     // Bindowanie portu
@@ -24,13 +22,5 @@ async fn main() {
 }
 
 async fn root() -> &'static str {
-    "Hello, Axum!"
-}
-
-async fn json() -> Json<Value> {
-    let data = json!({
-        "message": "Hello, Axum!",
-        "status": "success"
-    });
-    axum::Json(data)
+    "B.A.N.K.R.U.T - Serwer działa poprawnie!"
 }

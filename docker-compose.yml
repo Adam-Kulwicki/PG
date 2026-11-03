@@ -1,8 +1,32 @@
-version: '3.8'
-
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sports_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sports_db"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+
   backend:
-    image: ghcr.io/adam-kulwicki/bankrut-backend:develop
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:password@db:5432/sports_db
+      HOST: 0.0.0.0
+      PORT: 3000
+      RUST_LOG: info
     ports:
       - "3000:3000"
-    
+
+volumes:
+  pgdata:

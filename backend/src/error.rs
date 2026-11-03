@@ -18,7 +18,9 @@ pub enum AppError {
     #[error("Nie znaleziono zasobu: {0}")]
     NotFound(String),
 
-    #[error("Niewystarczające środki w portfelu agenta (wymagane: {required}, dostępne: {available})")]
+    #[error(
+        "Niewystarczające środki w portfelu agenta (wymagane: {required}, dostępne: {available})"
+    )]
     InsufficientFunds { required: String, available: String },
 
     #[error("Nie można obstawić tego meczu: {0}")]
@@ -54,16 +56,8 @@ impl IntoResponse for AppError {
                 "INSUFFICIENT_FUNDS",
                 self.to_string(),
             ),
-            AppError::BetRejected(msg) => (
-                StatusCode::CONFLICT,
-                "BET_REJECTED",
-                msg.clone(),
-            ),
-            AppError::BadRequest(msg) => (
-                StatusCode::BAD_REQUEST,
-                "BAD_REQUEST",
-                msg.clone(),
-            ),
+            AppError::BetRejected(msg) => (StatusCode::CONFLICT, "BET_REJECTED", msg.clone()),
+            AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
         };
 
         let body = Json(json!({

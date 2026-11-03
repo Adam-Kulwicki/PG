@@ -1,5 +1,5 @@
 # --- ETAP 1: Budowanie aplikacji ---
-FROM rust:1.78-slim AS builder
+FROM rust:1.85-slim AS builder
 
 WORKDIR /app
 
@@ -28,8 +28,8 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Kopiujemy skompilowaną binarkę z etapu budowania (zmień "nazwa-projektu" na nazwę z Cargo.toml)
-COPY --from=builder /app/target/release/nazwa-projektu /app/backend-app
+# Kopiujemy skompilowaną binarkę z etapu budowania
+COPY --from=builder /app/target/release/backend /app/backend-app
 
 # Port, na którym nasłuchuje Axum
 EXPOSE 3000

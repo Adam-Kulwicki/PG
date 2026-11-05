@@ -1,4 +1,5 @@
 // src/main.rs
+pub mod api;
 pub mod config;
 pub mod error;
 pub mod models;
@@ -66,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health_check))
         // W kolejnych fazach podepniesz tu pod-routery:
-        // .nest("/api/v1", api::router())
+        .nest("/api/v1", api::router())
         // .nest("/ws", ws::router())
         .layer(TraceLayer::new_for_http())
         .layer(cors)

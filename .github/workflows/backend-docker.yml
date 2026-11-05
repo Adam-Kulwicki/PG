@@ -114,7 +114,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/prod' }}
             type=ref,event=branch
 
       - name: Create multi-arch manifest

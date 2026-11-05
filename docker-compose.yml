@@ -16,7 +16,7 @@ services:
       retries: 5
 
   backend:
-    build: ./backend
+    image: ghcr.io/adam-kulwicki/bankrut-backend:dev
     depends_on:
       db:
         condition: service_healthy

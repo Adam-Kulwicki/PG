@@ -49,7 +49,11 @@ pub enum ServerMessage {
 
 /// Komendy przysyłane przez Agenta do Twojego serwera Axum
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "action", content = "payload", rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(
+    tag = "action",
+    content = "payload",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub enum AgentCommand {
     PlaceBet {
         match_id: i32,

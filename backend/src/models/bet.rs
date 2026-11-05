@@ -8,7 +8,8 @@ use sqlx::FromRow;
 pub struct Agent {
     pub id: i32,
     pub name: String,
-    #[serde(skip_serializing)] // Nie wyciekamy klucza API w publicznych endpointach typu leaderboard!
+    #[serde(skip_serializing)]
+    // Nie wyciekamy klucza API w publicznych endpointach typu leaderboard!
     pub api_key: String,
     pub strategy_description: Option<String>,
     pub initial_bankroll: Decimal,
@@ -26,7 +27,7 @@ pub struct Bet {
     pub stake: Decimal,
     pub odds_taken: Decimal,
     pub expected_value: Option<Decimal>,
-    pub status: String,        // "PENDING", "WON", "LOST", "VOID"
+    pub status: String, // "PENDING", "WON", "LOST", "VOID"
     pub profit_loss: Decimal,
     pub reasoning: Option<String>,
     pub placed_at: DateTime<Utc>,

@@ -1,17 +1,9 @@
 // src/state.rs
 use crate::config::Config;
-use serde::{Deserialize, Serialize};
+use crate::ws::protocol::ServerMessage;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::broadcast;
-
-// Tymczasowy placeholder na potrzeby Fazy 1 (docelowo w src/ws/protocol.rs)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum ServerMessage {
-    Ping,
-    // W Fazie 2 dodasz tu: Welcome, MatchOpportunity, BetResult, MatchSettled
-}
 
 #[derive(Clone)]
 pub struct AppState {

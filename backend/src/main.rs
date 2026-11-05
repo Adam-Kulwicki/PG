@@ -1,7 +1,9 @@
 // src/main.rs
 pub mod config;
 pub mod error;
+pub mod models;
 pub mod state;
+pub mod ws;
 
 use axum::{extract::State, routing::get, Json, Router};
 use config::Config;

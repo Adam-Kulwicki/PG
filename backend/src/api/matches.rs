@@ -15,7 +15,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_matches))
-        .route("/:id", get(get_match_by_id))
+        .route("/{id}", get(get_match_by_id))
 }
 
 #[derive(Debug, Deserialize)]

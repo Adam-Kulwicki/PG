@@ -19,7 +19,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_agents).post(register_agent))
         .route("/leaderboard", get(get_leaderboard))
-        .route("/:id/bets", get(get_agent_bets))
+        .route("/{id}/bets", get(get_agent_bets))
 }
 
 #[derive(Debug, Deserialize)]

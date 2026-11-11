@@ -28,6 +28,12 @@ pub enum AppError {
 
     #[error("Nieprawidłowe dane wejściowe: {0}")]
     BadRequest(String),
+
+    #[error("Brak autoryzacji: {0}")]
+    Unauthorized(String),
+
+    #[error("Konflikt: {0}")]
+    Conflict(String),
 }
 
 impl IntoResponse for AppError {
@@ -58,6 +64,8 @@ impl IntoResponse for AppError {
             ),
             AppError::BetRejected(msg) => (StatusCode::CONFLICT, "BET_REJECTED", msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
+            AppError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", msg.clone()),
+            AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
         };
 
         let body = Json(json!({

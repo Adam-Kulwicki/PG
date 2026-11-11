@@ -1,12 +1,6 @@
 // src/main.rs
-pub mod api;
-pub mod config;
-pub mod error;
-pub mod models;
-pub mod state;
-pub mod ws;
-
 use axum::{extract::State, routing::get, Json, Router};
+use backend::{api, config, error, state, ws};
 use config::Config;
 use error::AppResult;
 use serde_json::{json, Value};
@@ -66,9 +60,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 7. Definicja głównego Routera
     let app = Router::new()
         .route("/health", get(health_check))
-        // W kolejnych fazach podepniesz tu pod-routery:
         .nest("/api/v1", api::router())
-        // .nest("/ws", ws::router())
+        .nest("/ws", ws::router())
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(app_state);

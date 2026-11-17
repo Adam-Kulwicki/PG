@@ -69,7 +69,10 @@ fn fnv1a(input: &str) -> u64 {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    hash
+    // Wymieszanie bitów, aby zmiana ostatniego znaku wpływała na każdy bit skrótu
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xff51afd7ed558ccd);
+    hash ^ (hash >> 33)
 }
 
 /// Czy zwycięzca meczu ma zostać zapisany jako gospodarz (losowanie niezależne od wyniku).

@@ -96,7 +96,7 @@ fn parses_sackmann_csv() {
     };
     assert_eq!((winner_sets, loser_sets), (Some(3), Some(0)));
     assert_eq!(first.match_date.to_rfc3339(), "2024-01-14T12:00:00+00:00");
-    assert_eq!(first.home.metadata.get("ioc").is_some(), true);
+    assert!(first.home.metadata.get("ioc").is_some());
     match &first.details {
         MatchDetails::Tennis {
             surface,

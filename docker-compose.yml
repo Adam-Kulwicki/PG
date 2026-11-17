@@ -17,6 +17,9 @@ services:
 
   backend:
     image: ghcr.io/adam-kulwicki/bankrut-backend:dev
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy

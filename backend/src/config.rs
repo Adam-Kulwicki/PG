@@ -39,6 +39,7 @@ fn env_list<T: std::str::FromStr>(name: &str) -> Vec<T> {
     env::var(name)
         .unwrap_or_default()
         .split(',')
+        .filter(|s| !s.is_empty())
         .filter_map(|item| item.trim().parse::<T>().ok())
         .collect()
 }

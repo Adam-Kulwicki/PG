@@ -3,10 +3,12 @@ use backend::domain::betting_exchange::{check_bettable, expected_value, Selectio
 use chrono::{Duration, Utc};
 use rust_decimal::Decimal;
 
+/// Skrót do tworzenia `Decimal` z liczby zmiennoprzecinkowej.
 fn dec(v: f64) -> Decimal {
     Decimal::try_from(v).unwrap()
 }
 
+/// Typ zakładu jest rozpoznawany bez względu na wielkość liter i spacje.
 #[test]
 fn parses_selection_case_insensitively() {
     assert_eq!(Selection::parse("home").unwrap(), Selection::Home);
@@ -15,6 +17,7 @@ fn parses_selection_case_insensitively() {
     assert!(Selection::parse("x").is_err());
 }
 
+/// Poza backtestem przyjmujemy tylko nierozpoczęte mecze SCHEDULED.
 #[test]
 fn rejects_started_or_finished_matches_outside_backtest() {
     let now = Utc::now();
@@ -24,6 +27,7 @@ fn rejects_started_or_finished_matches_outside_backtest() {
     assert!(check_bettable("LIVE", now - Duration::minutes(5), now, false).is_err());
 }
 
+/// W oknie backtestu obstawiać można wyłącznie mecze historyczne (FINISHED).
 #[test]
 fn backtest_window_allows_only_finished_matches() {
     let now = Utc::now();
@@ -31,6 +35,7 @@ fn backtest_window_allows_only_finished_matches() {
     assert!(check_bettable("SCHEDULED", now + Duration::days(1), now, true).is_err());
 }
 
+/// EV = p * kurs - 1: dodatnie dla wartościowego zakładu, ujemne dla nieopłacalnego.
 #[test]
 fn computes_expected_value() {
     assert_eq!(expected_value(dec(0.5), dec(2.2)), dec(0.1));

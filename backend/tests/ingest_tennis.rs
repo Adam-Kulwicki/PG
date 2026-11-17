@@ -25,7 +25,10 @@ fn splits_csv_with_quotes() {
 fn parses_set_scores() {
     assert_eq!(parse_sets("6-4 3-6 7-6(5)"), vec![(6, 4), (3, 6), (7, 6)]);
     assert_eq!(parse_sets("6-3 2-0 RET"), vec![(6, 3), (2, 0)]);
-    assert_eq!(parse_sets("6-7(4) 6-4 [10-7]"), vec![(6, 7), (6, 4), (10, 7)]);
+    assert_eq!(
+        parse_sets("6-7(4) 6-4 [10-7]"),
+        vec![(6, 7), (6, 4), (10, 7)]
+    );
     assert!(parse_sets("W/O").is_empty());
 }
 
@@ -50,7 +53,11 @@ fn home_side_assignment_is_stable_and_balanced() {
     let home_wins = (0..200)
         .filter(|n| winner_is_home(&format!("2024-580-{}", n)))
         .count();
-    assert!((60..=140).contains(&home_wins), "niezrównoważone losowanie: {}", home_wins);
+    assert!(
+        (60..=140).contains(&home_wins),
+        "niezrównoważone losowanie: {}",
+        home_wins
+    );
 }
 
 /// Sackmann: zwycięzca i sety są spójne po losowaniu stron, a walkowery są pomijane.
@@ -78,7 +85,10 @@ fn parses_sackmann_csv() {
     let first = &matches[0];
     // Sinner jest zwycięzcą niezależnie od tego, po której stronie wylosowano.
     let sinner_home = first.home.name == "Jannik Sinner";
-    assert_eq!(first.winner.as_deref(), Some(if sinner_home { "HOME" } else { "AWAY" }));
+    assert_eq!(
+        first.winner.as_deref(),
+        Some(if sinner_home { "HOME" } else { "AWAY" })
+    );
     let (winner_sets, loser_sets) = if sinner_home {
         (first.home_score, first.away_score)
     } else {
@@ -88,7 +98,13 @@ fn parses_sackmann_csv() {
     assert_eq!(first.match_date.to_rfc3339(), "2024-01-14T12:00:00+00:00");
     assert_eq!(first.home.metadata.get("ioc").is_some(), true);
     match &first.details {
-        MatchDetails::Tennis { surface, best_of, sets, home_aces, away_aces } => {
+        MatchDetails::Tennis {
+            surface,
+            best_of,
+            sets,
+            home_aces,
+            away_aces,
+        } => {
             assert_eq!(surface, "Hard");
             assert_eq!(*best_of, 5);
             assert_eq!(sets.len(), 3);
@@ -111,7 +127,10 @@ fn parses_sackmann_csv() {
     }
 
     // Kolejna runda jest rozgrywana dzień później (draw_size 128: R128 → R64).
-    assert_eq!(matches[1].match_date.to_rfc3339(), "2024-01-15T12:00:00+00:00");
+    assert_eq!(
+        matches[1].match_date.to_rfc3339(),
+        "2024-01-15T12:00:00+00:00"
+    );
 }
 
 /// Nieoczekiwany nagłówek lub nieznany tour kończą się błędem.
@@ -166,8 +185,14 @@ fn parses_espn_scoreboard() {
     assert_eq!(finished.season, "2025");
     assert_eq!(finished.status, "FINISHED");
     assert_eq!(finished.winner.as_deref(), Some("HOME"));
-    assert_eq!((finished.home_score, finished.away_score), (Some(2), Some(1)));
-    assert_eq!(finished.match_date.to_rfc3339(), "2025-01-20T11:00:00+00:00");
+    assert_eq!(
+        (finished.home_score, finished.away_score),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
+        finished.match_date.to_rfc3339(),
+        "2025-01-20T11:00:00+00:00"
+    );
 
     let upcoming = &matches[1];
     assert_eq!(upcoming.status, "SCHEDULED");

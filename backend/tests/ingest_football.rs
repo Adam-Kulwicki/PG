@@ -97,7 +97,10 @@ fn parses_football_data_matches() {
     assert_eq!(finished.season, "2025-2026");
     assert_eq!(finished.status, "FINISHED");
     assert_eq!(finished.winner.as_deref(), Some("HOME"));
-    assert_eq!((finished.home_score, finished.away_score), (Some(4), Some(2)));
+    assert_eq!(
+        (finished.home_score, finished.away_score),
+        (Some(4), Some(2))
+    );
     assert_eq!(finished.home.short_code.as_deref(), Some("LIV"));
     assert_eq!(finished.external_ids["football_data"], 1);
 

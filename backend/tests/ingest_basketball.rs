@@ -31,7 +31,10 @@ fn parses_balldontlie_page() {
     assert_eq!(finished.season, "2024-2025");
     assert_eq!(finished.status, "FINISHED");
     assert_eq!(finished.winner.as_deref(), Some("AWAY"));
-    assert_eq!((finished.home_score, finished.away_score), (Some(109), Some(116)));
+    assert_eq!(
+        (finished.home_score, finished.away_score),
+        (Some(109), Some(116))
+    );
     assert!(matches!(
         finished.details,
         MatchDetails::Basketball { overtime: true, .. }
@@ -48,7 +51,8 @@ fn parses_balldontlie_page() {
 /// Ostatnia strona nie ma kursora.
 #[test]
 fn last_page_has_no_cursor() {
-    let (matches, cursor) = parse_balldontlie_page(r#"{"data": [], "meta": {"per_page": 100}}"#).unwrap();
+    let (matches, cursor) =
+        parse_balldontlie_page(r#"{"data": [], "meta": {"per_page": 100}}"#).unwrap();
     assert!(matches.is_empty());
     assert_eq!(cursor, None);
 }
@@ -71,10 +75,16 @@ fn parses_thesportsdb_events() {
     assert_eq!(matches.len(), 2);
     assert_eq!(matches[0].status, "FINISHED");
     assert_eq!(matches[0].winner.as_deref(), Some("HOME"));
-    assert_eq!(matches[0].match_date.to_rfc3339(), "2024-10-03T19:30:00+00:00");
+    assert_eq!(
+        matches[0].match_date.to_rfc3339(),
+        "2024-10-03T19:30:00+00:00"
+    );
     assert_eq!(matches[1].status, "SCHEDULED");
     // Brak znacznika czasu: data i godzina składane są z osobnych pól.
-    assert_eq!(matches[1].match_date.to_rfc3339(), "2024-10-05T18:00:00+00:00");
+    assert_eq!(
+        matches[1].match_date.to_rfc3339(),
+        "2024-10-05T18:00:00+00:00"
+    );
 
     assert!(parse_thesportsdb_events(r#"{"events": null}"#, "2024-2025")
         .unwrap()

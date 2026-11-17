@@ -1,4 +1,6 @@
 // src/state.rs
+//! Współdzielony stan aplikacji udostępniany każdemu handlerowi Axum.
+
 use crate::config::Config;
 use crate::ws::protocol::WsEnvelope;
 use sqlx::PgPool;
@@ -6,11 +8,16 @@ use std::collections::HashSet;
 use std::sync::{atomic::AtomicBool, Arc};
 use tokio::sync::{broadcast, RwLock};
 
+/// Stan klonowany do każdego handlera (wszystkie pola są tanie w klonowaniu).
 #[derive(Clone)]
 pub struct AppState {
+    /// Pula połączeń z PostgreSQL.
     pub db: PgPool,
+    /// Konfiguracja wczytana przy starcie.
     pub config: Arc<Config>,
+    /// Klient HTTP do zewnętrznych API sportowych.
     pub http_client: reqwest::Client,
+    /// Kanał broadcast do WebSocket Hub – każde połączenie agenta subskrybuje go przez `subscribe()`.
     pub ws_tx: broadcast::Sender<WsEnvelope>,
     /// Mecze historyczne (FINISHED), na które agenci mogą w tej chwili obstawiać w ramach
     /// trwającego backtestu (aktualny "dzień" symulacji). Poza backtestem zbiór jest pusty.
@@ -20,8 +27,9 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Tworzy stan z gotowej puli bazy i konfiguracji (buduje też kanał broadcast i klienta HTTP).
     pub fn new(db: PgPool, config: Config) -> Self {
-        // Pojemność bufora na 1024 wiadomości w kanale broadcastowym
+        // Bufor kanału broadcast mieści 1024 wiadomości; wolniejsi odbiorcy dostają `Lagged`.
         let (ws_tx, _ws_rx) = broadcast::channel(1024);
 
         let http_client = reqwest::Client::builder()

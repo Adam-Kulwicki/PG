@@ -116,6 +116,10 @@ Utwórz plik `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`
 ```env
 FOOTBALL_DATA_API_KEY=twoj_klucz_football_data
 BALLDONTLIE_API_KEY=twoj_klucz_balldontlie
+INGEST_FOOTBALL_SEASONS=2023-24,2024-25
+INGEST_NBA_SEASONS=2023,2024
+INGEST_TENNIS_YEARS=2023,2024
+INGEST_TENNIS_TOURS=ATP
 ```
 
 *(Plik `.env` jest ignorowany przez Gita w `.gitignore`.)*

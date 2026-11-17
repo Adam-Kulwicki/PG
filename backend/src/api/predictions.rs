@@ -16,11 +16,12 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/", post(create_prediction))
 }
 
-/// Dopuszczalna odchyłka sumy prawdopodobieństw od 1.0 (zaokrąglenia modeli)
+/// Dopuszczalna odchyłka sumy prawdopodobieństw od 1.0 (modele zaokrąglają wyniki).
 fn probability_tolerance() -> Decimal {
     Decimal::new(1, 2) // 0.01
 }
 
+/// Sprawdza, że każde prawdopodobieństwo mieści się w [0, 1], a ich suma wynosi 1.0 (±0.01).
 pub fn validate_probabilities(home: Decimal, draw: Decimal, away: Decimal) -> AppResult<()> {
     for (name, p) in [
         ("prob_home", home),

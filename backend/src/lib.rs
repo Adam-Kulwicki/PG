@@ -5,6 +5,7 @@ pub mod api;
 pub mod config;
 pub mod domain;
 pub mod error;
+pub mod ingest;
 pub mod models;
 pub mod state;
 pub mod ws;

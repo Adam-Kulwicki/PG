@@ -1,4 +1,6 @@
 // src/api/agents.rs
+//! Rejestracja agentów, ranking (leaderboard) i historia ich zakładów.
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -15,6 +17,7 @@ use crate::{
     state::AppState,
 };
 
+/// Trasy: lista/rejestracja agentów, `/leaderboard` oraz `/{id}/bets`.
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_agents).post(register_agent))
@@ -22,6 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/{id}/bets", get(get_agent_bets))
 }
 
+/// Payload rejestracji agenta (POST /api/v1/agents).
 #[derive(Debug, Deserialize)]
 pub struct CreateAgentDto {
     pub name: String,
@@ -30,6 +34,7 @@ pub struct CreateAgentDto {
     pub initial_bankroll: Option<Decimal>,
 }
 
+/// Odpowiedź po rejestracji – jedyny moment, w którym `api_key` wraca w odpowiedzi API.
 #[derive(Debug, Serialize)]
 pub struct AgentCreatedResponse {
     pub id: i32,
@@ -38,6 +43,7 @@ pub struct AgentCreatedResponse {
     pub current_bankroll: Decimal,
 }
 
+/// Wiersz rankingu: saldo, zysk, ROI % oraz statystyki zakładów agenta.
 #[derive(Debug, Serialize, FromRow)]
 pub struct LeaderboardEntryDto {
     pub id: i32,
@@ -51,7 +57,7 @@ pub struct LeaderboardEntryDto {
     pub won_bets: i64,
 }
 
-/// GET /api/v1/agents
+/// GET /api/v1/agents – lista zarejestrowanych agentów (bez kluczy API).
 async fn list_agents(State(state): State<AppState>) -> AppResult<Json<Vec<Agent>>> {
     let agents = sqlx::query_as::<_, Agent>("SELECT * FROM agents ORDER BY id ASC")
         .fetch_all(&state.db)
@@ -60,7 +66,7 @@ async fn list_agents(State(state): State<AppState>) -> AppResult<Json<Vec<Agent>
     Ok(Json(agents))
 }
 
-/// POST /api/v1/agents
+/// POST /api/v1/agents – rejestruje agenta z podanym kapitałem początkowym (domyślnie 1000).
 async fn register_agent(
     State(state): State<AppState>,
     Json(payload): Json<CreateAgentDto>,
@@ -71,10 +77,12 @@ async fn register_agent(
         ));
     }
 
+    // Domyślny kapitał początkowy to 1000
     let bankroll = payload
         .initial_bankroll
         .unwrap_or_else(|| Decimal::from(1000));
 
+    // Saldo bieżące startuje równe początkowemu ($4 użyte dwukrotnie)
     let agent = sqlx::query_as::<_, Agent>(
         r#"
         INSERT INTO agents (name, api_key, strategy_description, initial_bankroll, current_bankroll)
@@ -100,10 +108,12 @@ async fn register_agent(
     ))
 }
 
-/// GET /api/v1/agents/leaderboard
+/// GET /api/v1/agents/leaderboard – ranking agentów według aktualnego salda.
 async fn get_leaderboard(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<LeaderboardEntryDto>>> {
+    // ROI = zysk / kapitał początkowy * 100; NULLIF chroni przed dzieleniem przez zero.
+    // LEFT JOIN, aby agenci bez zakładów też trafili do rankingu.
     let leaderboard = sqlx::query_as::<_, LeaderboardEntryDto>(
         r#"
         SELECT 
@@ -128,7 +138,7 @@ async fn get_leaderboard(
     Ok(Json(leaderboard))
 }
 
-/// GET /api/v1/agents/:id/bets
+/// GET /api/v1/agents/{id}/bets – historia zakładów agenta, od najnowszych.
 async fn get_agent_bets(
     State(state): State<AppState>,
     Path(agent_id): Path<i32>,

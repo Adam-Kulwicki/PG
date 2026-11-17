@@ -1,4 +1,6 @@
 // src/api/matches.rs
+//! Pobieranie i filtrowanie meczów dla silników ML oraz frontendu.
+
 use axum::{
     extract::{Path, Query, State},
     routing::get,
@@ -12,24 +14,31 @@ use crate::{
     state::AppState,
 };
 
+/// Trasy: `GET /` (lista z filtrami) i `GET /{id}` (szczegóły meczu).
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list_matches))
         .route("/{id}", get(get_match_by_id))
 }
 
+/// Opcjonalne filtry z query stringa; brak filtra = brak ograniczenia.
 #[derive(Debug, Deserialize)]
 pub struct MatchFilter {
-    pub sport: Option<String>,  // np. "FOOTBALL", "BASKETBALL", "TENNIS"
-    pub status: Option<String>, // np. "SCHEDULED", "FINISHED"
-    pub season: Option<String>, // np. "2026-2027"
+    /// Dyscyplina: "FOOTBALL", "BASKETBALL" lub "TENNIS" (wielkość liter bez znaczenia).
+    pub sport: Option<String>,
+    /// Status meczu, np. "SCHEDULED" lub "FINISHED".
+    pub status: Option<String>,
+    /// Sezon w formacie używanym w bazie, np. "2026-2027".
+    pub season: Option<String>,
 }
 
-/// GET /api/v1/matches?sport=...&status=...
+/// GET /api/v1/matches – lista meczów, opcjonalnie filtrowana (`?sport=...&status=...&season=...`).
 async fn list_matches(
     State(state): State<AppState>,
     Query(filter): Query<MatchFilter>,
 ) -> AppResult<Json<Vec<MatchWithDetailsDto>>> {
+    // Mecz + nazwy drużyn + kurs MARKET_AVG (LEFT JOIN – mecz może nie mieć jeszcze kursów).
+    // Filtry `$n IS NULL OR ...` pozwalają użyć jednego zapytania dla każdej kombinacji parametrów.
     let matches = sqlx::query_as::<_, MatchWithDetailsDto>(
         r#"
         SELECT 
@@ -70,11 +79,12 @@ async fn list_matches(
     Ok(Json(matches))
 }
 
-/// GET /api/v1/matches/:id
+/// GET /api/v1/matches/{id} – szczegóły jednego meczu; nieistniejący ID daje 404.
 async fn get_match_by_id(
     State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> AppResult<Json<MatchWithDetailsDto>> {
+    // Takie samo złączenie jak w liście, ale dla jednego meczu; brak wiersza oznacza 404.
     let match_item = sqlx::query_as::<_, MatchWithDetailsDto>(
         r#"
         SELECT 

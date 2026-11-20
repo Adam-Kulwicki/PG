@@ -3,7 +3,8 @@
 //!
 //! Każde źródło (`football`, `basketball`, `tennis`) tłumaczy odpowiedź dostawcy na wspólny
 //! typ [`IngestedMatch`], a [`store_matches`] zapisuje go idempotentnie
-//! (`INSERT ... ON CONFLICT DO UPDATE`), więc import można bezpiecznie powtarzać.
+//! (`INSERT ... ON CONFLICT DO UPDATE` oraz dopasowanie po `external_ids` i oknie czasowym),
+//! więc import można bezpiecznie powtarzać.
 //!
 //! Uwaga: żadne ze źródeł nie dostarcza kursów bukmacherskich, dlatego zaimportowane mecze
 //! nie mają wpisów w `match_odds` i nie można na nie obstawiać, dopóki kursy nie zostaną dodane.
@@ -14,7 +15,7 @@ pub mod tennis;
 
 use std::{collections::HashMap, time::Duration};
 
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, NaiveTime, Utc};
 use serde_json::Value;
 use sqlx::{types::Json, PgConnection, PgPool};
 
@@ -105,6 +106,19 @@ pub fn full_season_label(start_year: i32) -> String {
     format!("{}-{}", start_year, start_year + 1)
 }
 
+/// Przekształca etykietę sezonu na format zapisywany w bazie: `2023-24` lub `2023/24` → `2023-2024`.
+/// Etykiety, których nie rozpoznajemy, zwracane są bez zmian.
+pub fn normalize_season_label(raw: &str) -> String {
+    let normalized = raw.trim().replace('/', "-");
+    let Some((start, end)) = normalized.split_once('-') else {
+        return normalized;
+    };
+    match (start.parse::<i32>(), end.len()) {
+        (Ok(year), 2) | (Ok(year), 4) => full_season_label(year),
+        _ => normalized,
+    }
+}
+
 /// Pobiera treść odpowiedzi HTTP, ponawiając zapytanie po `429` (limity darmowych kluczy API).
 pub async fn fetch_text(
     client: &reqwest::Client,
@@ -136,11 +150,326 @@ pub async fn fetch_text(
     }
 }
 
+/// Pobiera treść odpowiedzi HTTP z własnym limitem czasu i zdefiniowaną ścieżką ponowień.
+///
+/// Ponawia zapytanie przy timeoutcie, błędzie połączenia, statusie `429` lub błędzie
+/// serwera (`5xx`), czekając kolejne interwały z `retry_delays`.
+pub async fn fetch_text_with_timeout(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &[(&str, &str)],
+    timeout: Duration,
+    retry_delays: &[Duration],
+) -> AppResult<String> {
+    let mut attempt = 0;
+    loop {
+        let mut request = client.get(url).timeout(timeout);
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+
+        let retry_reason = match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if (status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error())
+                    && attempt < retry_delays.len()
+                {
+                    format!("HTTP {}", status.as_u16())
+                } else {
+                    match response.error_for_status()?.text().await {
+                        Ok(body) => return Ok(body),
+                        Err(err) if err.is_timeout() && attempt < retry_delays.len() => {
+                            err.to_string()
+                        }
+                        Err(err) => return Err(err.into()),
+                    }
+                }
+            }
+            Err(err) if (err.is_timeout() || err.is_connect()) && attempt < retry_delays.len() => {
+                err.to_string()
+            }
+            Err(err) => return Err(err.into()),
+        };
+
+        let delay = retry_delays[attempt];
+        attempt += 1;
+        tracing::warn!(
+            url,
+            attempt,
+            delay_secs = delay.as_secs_f64(),
+            reason = %retry_reason,
+            "Błąd zapytania HTTP – ponawiam po przerwie"
+        );
+        tokio::time::sleep(delay).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Deduplikacja i zapis do bazy
+// ---------------------------------------------------------------------------
+
+/// Istniejący rekord meczu pobrany z bazy podczas deduplikacji w [`store_matches`].
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct ExistingMatchRow {
+    pub id: i32,
+    pub match_date: DateTime<Utc>,
+    pub status: String,
+    pub home_participant_id: i32,
+    pub away_participant_id: i32,
+    pub home_score: Option<i32>,
+    pub away_score: Option<i32>,
+    pub winner: Option<String>,
+    pub match_details: Json<MatchDetails>,
+    pub external_ids: Json<Value>,
+}
+
+/// Pola meczu po scaleniu istniejącego wiersza z nowymi danymi z API.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MergedMatchUpdate {
+    pub match_date: DateTime<Utc>,
+    pub status: String,
+    pub home_score: Option<i32>,
+    pub away_score: Option<i32>,
+    pub winner: Option<String>,
+    pub details: MatchDetails,
+}
+
+/// Wybiera dokładniejszy czas rozpoczęcia meczu: godzina różna od `00:00:00` UTC wygrywa
+/// z samą datą (np. `datetime` z BALLDONTLIE nad `GAME_DATE` ze `stats.nba.com`).
+pub fn choose_match_date(existing: DateTime<Utc>, incoming: DateTime<Utc>) -> DateTime<Utc> {
+    if existing.time() != NaiveTime::MIN && incoming.time() == NaiveTime::MIN {
+        existing
+    } else {
+        incoming
+    }
+}
+
+/// Scala szczegóły meczu, łącząc kwarty z BALLDONTLIE oraz statystyki ze `stats.nba.com`
+/// niezależnie od kolejności uruchomienia źródeł.
+pub fn merge_match_details(existing: MatchDetails, incoming: MatchDetails) -> MatchDetails {
+    match (existing, incoming) {
+        (
+            MatchDetails::Basketball {
+                quarters: old_quarters,
+                overtime: old_overtime,
+                season_type: old_season_type,
+                home_stats: old_home_stats,
+                away_stats: old_away_stats,
+            },
+            MatchDetails::Basketball {
+                quarters: new_quarters,
+                overtime: new_overtime,
+                season_type: new_season_type,
+                home_stats: new_home_stats,
+                away_stats: new_away_stats,
+            },
+        ) => MatchDetails::Basketball {
+            quarters: if new_quarters.is_empty() {
+                old_quarters
+            } else {
+                new_quarters
+            },
+            overtime: old_overtime || new_overtime,
+            season_type: new_season_type.or(old_season_type),
+            home_stats: new_home_stats.or(old_home_stats),
+            away_stats: new_away_stats.or(old_away_stats),
+        },
+        (_, incoming) => incoming,
+    }
+}
+
+/// Odwraca wskazanie zwycięzcy przy zamianie stron gospodarz ↔ gość.
+fn flip_winner(winner: Option<&str>) -> Option<String> {
+    winner.map(|w| match w {
+        "HOME" => "AWAY".to_string(),
+        "AWAY" => "HOME".to_string(),
+        other => other.to_string(),
+    })
+}
+
+/// Zamienia statystyki i punkty kwart między gospodarzem a gościem (mecze na terenie neutralnym).
+fn flip_details_sides(details: MatchDetails) -> MatchDetails {
+    match details {
+        MatchDetails::Basketball {
+            quarters,
+            overtime,
+            season_type,
+            home_stats,
+            away_stats,
+        } => MatchDetails::Basketball {
+            quarters: quarters.into_iter().map(|(h, a)| (a, h)).collect(),
+            overtime,
+            season_type,
+            home_stats: away_stats,
+            away_stats: home_stats,
+        },
+        other => other,
+    }
+}
+
+/// Sprawdza, czy dwa rekordy mają ten sam klucz zewnętrzny (np. `nba_game_id`) o różnych wartościach.
+fn has_conflicting_external_id(existing: &Value, incoming: &Value) -> bool {
+    let (Some(a), Some(b)) = (existing.as_object(), incoming.as_object()) else {
+        return false;
+    };
+    a.iter().any(|(key, val_a)| {
+        if val_a.is_null() {
+            return false;
+        }
+        match b.get(key) {
+            Some(val_b) if !val_b.is_null() => val_a != val_b,
+            _ => false,
+        }
+    })
+}
+
+/// Wybiera najlepiej pasujący rekord z okna ±36h, chroniąc sąsiednie mecze back-to-back
+/// przed przypadkowym scaleniem.
+pub fn select_matching_row(
+    candidates: &[ExistingMatchRow],
+    incoming: &IngestedMatch,
+    home_id: i32,
+    away_id: i32,
+) -> Option<usize> {
+    let mut best: Option<(usize, (i64, bool))> = None;
+
+    for (idx, cand) in candidates.iter().enumerate() {
+        if has_conflicting_external_id(&cand.external_ids.0, &incoming.external_ids) {
+            continue;
+        }
+
+        let same_sides = cand.home_participant_id == home_id && cand.away_participant_id == away_id;
+        let swapped = incoming.sport == "BASKETBALL"
+            && cand.home_participant_id == away_id
+            && cand.away_participant_id == home_id;
+        if !same_sides && !swapped {
+            continue;
+        }
+
+        // Gdy oba rekordy znają wynik, nie pozwalamy scalić dwóch różnych spotkań.
+        let existing_scores = cand.home_score.zip(cand.away_score);
+        let incoming_scores =
+            incoming.home_score.zip(incoming.away_score).map(
+                |(h, a)| {
+                    if swapped {
+                        (a, h)
+                    } else {
+                        (h, a)
+                    }
+                },
+            );
+        if let (Some(es), Some(is)) = (existing_scores, incoming_scores) {
+            if es != is {
+                continue;
+            }
+        }
+
+        let cand_midnight = cand.match_date.time() == NaiveTime::MIN;
+        let inc_midnight = incoming.match_date.time() == NaiveTime::MIN;
+        let (dist, max_dist) = if incoming.sport == "BASKETBALL" && cand_midnight != inc_midnight {
+            // Mecze NBA rozgrywane wieczorem czasu USA mają w UTC datę z następnej doby;
+            // przesunięcie północy o +23h i okno ±12h rozdziela mecze rozgrywane dzień po dniu.
+            let shift = ChronoDuration::hours(23);
+            let cand_adj = if cand_midnight {
+                cand.match_date + shift
+            } else {
+                cand.match_date
+            };
+            let inc_adj = if inc_midnight {
+                incoming.match_date + shift
+            } else {
+                incoming.match_date
+            };
+            ((cand_adj - inc_adj).num_seconds().abs(), 12 * 3600)
+        } else {
+            (
+                (cand.match_date - incoming.match_date).num_seconds().abs(),
+                36 * 3600,
+            )
+        };
+        if dist > max_dist {
+            continue;
+        }
+
+        let candidate_key = (dist, swapped);
+        let is_better = match best {
+            None => true,
+            Some((_, best_key)) => candidate_key < best_key,
+        };
+        if is_better {
+            best = Some((idx, candidate_key));
+        }
+    }
+
+    best.map(|(idx, _)| idx)
+}
+
+/// Przygotowuje scalone pola do `UPDATE`, zachowując kierunek stron istniejącego rekordu.
+pub fn merge_existing_match(
+    existing: &ExistingMatchRow,
+    incoming: &IngestedMatch,
+    incoming_home_id: i32,
+    incoming_away_id: i32,
+) -> MergedMatchUpdate {
+    let swapped = existing.home_participant_id == incoming_away_id
+        && existing.away_participant_id == incoming_home_id;
+
+    let (inc_home_score, inc_away_score, inc_winner, inc_details) = if swapped {
+        (
+            incoming.away_score,
+            incoming.home_score,
+            flip_winner(incoming.winner.as_deref()),
+            flip_details_sides(incoming.details.clone()),
+        )
+    } else {
+        (
+            incoming.home_score,
+            incoming.away_score,
+            incoming.winner.clone(),
+            incoming.details.clone(),
+        )
+    };
+
+    let match_date = choose_match_date(existing.match_date, incoming.match_date);
+
+    // Zakończony mecz nie cofa się do starszego statusu, ale może przyjąć dokładniejszą godzinę.
+    if existing.status == "FINISHED" && incoming.status != "FINISHED" {
+        return MergedMatchUpdate {
+            match_date,
+            status: existing.status.clone(),
+            home_score: existing.home_score,
+            away_score: existing.away_score,
+            winner: existing.winner.clone(),
+            details: existing.match_details.0.clone(),
+        };
+    }
+
+    MergedMatchUpdate {
+        match_date,
+        status: incoming.status.clone(),
+        home_score: inc_home_score.or(existing.home_score),
+        away_score: inc_away_score.or(existing.away_score),
+        winner: inc_winner.or_else(|| existing.winner.clone()),
+        details: merge_match_details(existing.match_details.0.clone(), inc_details),
+    }
+}
+
+/// Rozbija obiekt `external_ids` na pojedyncze pary `{klucz: wartość}` do zapytań `@>`.
+fn external_id_probes(external_ids: &Value) -> Vec<Value> {
+    let Some(map) = external_ids.as_object() else {
+        return Vec::new();
+    };
+    map.iter()
+        .filter(|(_, val)| !val.is_null() && !matches!(val, Value::String(s) if s.is_empty()))
+        .map(|(k, v)| serde_json::json!({ k: v }))
+        .collect()
+}
+
 /// Zapisuje mecze w jednej transakcji i zwraca liczbę przetworzonych rekordów.
 ///
-/// Rozgrywki i uczestnicy są tworzeni w razie potrzeby, a mecze aktualizowane po kluczu
-/// `(competition_id, season, match_date, home, away)`. Zakończony mecz nie jest cofany do
-/// statusu niezakończonego przez starsze dane.
+/// Rozgrywki i uczestnicy są tworzeni w razie potrzeby. Przed wstawieniem nowego meczu
+/// funkcja szuka istniejącego rekordu po `external_ids`, a następnie po drużynach i oknie ±36h,
+/// scalając dane z różnych źródeł (np. `stats.nba.com` i BALLDONTLIE) bez duplikatów.
 pub async fn store_matches(db: &PgPool, items: &[IngestedMatch]) -> AppResult<usize> {
     if items.is_empty() {
         return Ok(0);
@@ -150,6 +479,7 @@ pub async fn store_matches(db: &PgPool, items: &[IngestedMatch]) -> AppResult<us
     // Bufory zapobiegają wielokrotnemu odpytywaniu bazy o te same rozgrywki i uczestników.
     let mut competitions: HashMap<String, i32> = HashMap::new();
     let mut participants: HashMap<(&'static str, String), i32> = HashMap::new();
+    let mut saved = 0;
 
     for m in items {
         let competition_id = match competitions.get(&m.competition_code) {
@@ -182,44 +512,133 @@ pub async fn store_matches(db: &PgPool, items: &[IngestedMatch]) -> AppResult<us
             continue;
         }
 
-        sqlx::query(
-            r#"
-            INSERT INTO matches (
-                competition_id, season, match_date, status,
-                home_participant_id, away_participant_id,
-                home_score, away_score, winner, match_details, external_ids
+        // Krok A: dopasowanie po znanym identyfikatorze zewnętrznego dostawcy.
+        let mut existing: Option<ExistingMatchRow> = None;
+        for probe in external_id_probes(&m.external_ids) {
+            let found: Option<ExistingMatchRow> = sqlx::query_as(
+                r#"
+                SELECT
+                    id, match_date, status,
+                    home_participant_id, away_participant_id,
+                    home_score, away_score, winner,
+                    match_details, external_ids
+                FROM matches
+                WHERE competition_id = $1
+                  AND external_ids @> $2::jsonb
+                LIMIT 1
+                "#,
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (competition_id, season, match_date, home_participant_id, away_participant_id)
-            DO UPDATE SET
-                status = CASE WHEN matches.status = 'FINISHED' AND EXCLUDED.status <> 'FINISHED'
-                              THEN matches.status ELSE EXCLUDED.status END,
-                home_score = COALESCE(EXCLUDED.home_score, matches.home_score),
-                away_score = COALESCE(EXCLUDED.away_score, matches.away_score),
-                winner = COALESCE(EXCLUDED.winner, matches.winner),
-                match_details = CASE WHEN matches.status = 'FINISHED' AND EXCLUDED.status <> 'FINISHED'
-                                     THEN matches.match_details ELSE EXCLUDED.match_details END,
-                external_ids = matches.external_ids || EXCLUDED.external_ids,
-                updated_at = NOW()
-            "#,
-        )
-        .bind(competition_id)
-        .bind(&m.season)
-        .bind(m.match_date)
-        .bind(&m.status)
-        .bind(home_id)
-        .bind(away_id)
-        .bind(m.home_score)
-        .bind(m.away_score)
-        .bind(&m.winner)
-        .bind(Json(&m.details))
-        .bind(Json(&m.external_ids))
-        .execute(&mut *tx)
-        .await?;
+            .bind(competition_id)
+            .bind(Json(&probe))
+            .fetch_optional(&mut *tx)
+            .await?;
+
+            if found.is_some() {
+                existing = found;
+                break;
+            }
+        }
+
+        // Krok B: dopasowanie po parze drużyn i oknie czasowym ±36h (np. pierwszy zapis z drugiego źródła).
+        if existing.is_none() {
+            let candidates: Vec<ExistingMatchRow> = sqlx::query_as(
+                r#"
+                SELECT
+                    id, match_date, status,
+                    home_participant_id, away_participant_id,
+                    home_score, away_score, winner,
+                    match_details, external_ids
+                FROM matches
+                WHERE competition_id = $1
+                  AND season = $2
+                  AND match_date BETWEEN ($3 - INTERVAL '36 hours') AND ($3 + INTERVAL '36 hours')
+                  AND (
+                      (home_participant_id = $4 AND away_participant_id = $5)
+                      OR ($6 AND home_participant_id = $5 AND away_participant_id = $4)
+                  )
+                "#,
+            )
+            .bind(competition_id)
+            .bind(&m.season)
+            .bind(m.match_date)
+            .bind(home_id)
+            .bind(away_id)
+            .bind(m.sport == "BASKETBALL")
+            .fetch_all(&mut *tx)
+            .await?;
+
+            if let Some(idx) = select_matching_row(&candidates, m, home_id, away_id) {
+                existing = Some(candidates[idx].clone());
+            }
+        }
+
+        if let Some(existing_row) = existing {
+            let merged = merge_existing_match(&existing_row, m, home_id, away_id);
+            sqlx::query(
+                r#"
+                UPDATE matches
+                SET match_date = $1,
+                    status = $2,
+                    home_score = $3,
+                    away_score = $4,
+                    winner = $5,
+                    match_details = $6,
+                    external_ids = matches.external_ids || $7,
+                    updated_at = NOW()
+                WHERE id = $8
+                "#,
+            )
+            .bind(merged.match_date)
+            .bind(&merged.status)
+            .bind(merged.home_score)
+            .bind(merged.away_score)
+            .bind(&merged.winner)
+            .bind(Json(&merged.details))
+            .bind(Json(&m.external_ids))
+            .bind(existing_row.id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query(
+                r#"
+                INSERT INTO matches (
+                    competition_id, season, match_date, status,
+                    home_participant_id, away_participant_id,
+                    home_score, away_score, winner, match_details, external_ids
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (competition_id, season, match_date, home_participant_id, away_participant_id)
+                DO UPDATE SET
+                    status = CASE WHEN matches.status = 'FINISHED' AND EXCLUDED.status <> 'FINISHED'
+                                  THEN matches.status ELSE EXCLUDED.status END,
+                    home_score = COALESCE(EXCLUDED.home_score, matches.home_score),
+                    away_score = COALESCE(EXCLUDED.away_score, matches.away_score),
+                    winner = COALESCE(EXCLUDED.winner, matches.winner),
+                    match_details = CASE WHEN matches.status = 'FINISHED' AND EXCLUDED.status <> 'FINISHED'
+                                         THEN matches.match_details ELSE EXCLUDED.match_details END,
+                    external_ids = matches.external_ids || EXCLUDED.external_ids,
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(competition_id)
+            .bind(&m.season)
+            .bind(m.match_date)
+            .bind(&m.status)
+            .bind(home_id)
+            .bind(away_id)
+            .bind(m.home_score)
+            .bind(m.away_score)
+            .bind(&m.winner)
+            .bind(Json(&m.details))
+            .bind(Json(&m.external_ids))
+            .execute(&mut *tx)
+            .await?;
+        }
+        saved += 1;
     }
 
     tx.commit().await?;
-    Ok(items.len())
+    Ok(saved)
 }
 
 /// Zwraca ID uczestnika, tworząc go lub uzupełniając metadane, jeśli już istnieje.

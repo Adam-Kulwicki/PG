@@ -9,9 +9,10 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
 
+pub use super::normalize_season_label;
 use super::{
-    fetch_text, full_season_label, season_start_year, short_season_label, store_matches,
-    winner_from_scores, IngestedMatch, IngestedParticipant,
+    fetch_text, season_start_year, short_season_label, store_matches, winner_from_scores,
+    IngestedMatch, IngestedParticipant,
 };
 use crate::{
     error::{AppError, AppResult},
@@ -26,19 +27,6 @@ const COMPETITION_COUNTRY: &str = "England";
 
 /// Godzina przyjmowana dla meczów OpenFootball bez podanej godziny.
 const DEFAULT_KICKOFF_HOUR: u32 = 15;
-
-/// Przekształca etykietę sezonu na format zapisywany w bazie: `2023-24` lub `2023/24` → `2023-2024`.
-/// Etykiety, których nie rozpoznajemy, zwracane są bez zmian.
-pub fn normalize_season_label(raw: &str) -> String {
-    let normalized = raw.trim().replace('/', "-");
-    let Some((start, end)) = normalized.split_once('-') else {
-        return normalized;
-    };
-    match (start.parse::<i32>(), end.len()) {
-        (Ok(year), 2) | (Ok(year), 4) => full_season_label(year),
-        _ => normalized,
-    }
-}
 
 // ---------------------------------------------------------------------------
 // OpenFootball (historia)

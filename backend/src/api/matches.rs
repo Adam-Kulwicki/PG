@@ -6,6 +6,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::{
@@ -13,6 +14,9 @@ use crate::{
     models::match_model::MatchWithDetailsDto,
     state::AppState,
 };
+
+/// Maksymalna liczba meczów zwracana w pojedynczej odpowiedzi `GET /api/v1/matches`.
+pub const MAX_MATCHES_LIMIT: i64 = 5000;
 
 /// Trasy: `GET /` (lista z filtrami) i `GET /{id}` (szczegóły meczu).
 pub fn router() -> Router<AppState> {
@@ -30,13 +34,31 @@ pub struct MatchFilter {
     pub status: Option<String>,
     /// Sezon w formacie używanym w bazie, np. "2026-2027".
     pub season: Option<String>,
+    /// Maksymalna liczba wyników (ograniczona do [`MAX_MATCHES_LIMIT`]; brak = wszystkie).
+    pub limit: Option<i64>,
+    /// Przesunięcie wyników do paginacji (domyślnie `0`).
+    pub offset: Option<i64>,
+    /// Dolna granica daty meczu w UTC (`match_date >= date_from`).
+    pub date_from: Option<DateTime<Utc>>,
+    /// Górna granica daty meczu w UTC (`match_date <= date_to`).
+    pub date_to: Option<DateTime<Utc>>,
 }
 
-/// GET /api/v1/matches – lista meczów, opcjonalnie filtrowana (`?sport=...&status=...&season=...`).
+/// Normalizuje parametry paginacji: `limit` mieści się w `1..=5000`, a `offset >= 0`.
+pub fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> (Option<i64>, i64) {
+    (
+        limit.map(|l| l.clamp(1, MAX_MATCHES_LIMIT)),
+        offset.unwrap_or(0).max(0),
+    )
+}
+
+/// GET /api/v1/matches – lista meczów, opcjonalnie filtrowana (`?sport=...&status=...&season=...&limit=...&offset=...&date_from=...&date_to=...`).
 async fn list_matches(
     State(state): State<AppState>,
     Query(filter): Query<MatchFilter>,
 ) -> AppResult<Json<Vec<MatchWithDetailsDto>>> {
+    let (limit, offset) = normalize_pagination(filter.limit, filter.offset);
+
     // Mecz + nazwy drużyn + kurs MARKET_AVG (LEFT JOIN – mecz może nie mieć jeszcze kursów).
     // Filtry `$n IS NULL OR ...` pozwalają użyć jednego zapytania dla każdej kombinacji parametrów.
     let matches = sqlx::query_as::<_, MatchWithDetailsDto>(
@@ -67,12 +89,19 @@ async fn list_matches(
         WHERE ($1::VARCHAR IS NULL OR c.sport = UPPER($1))
           AND ($2::VARCHAR IS NULL OR m.status = UPPER($2))
           AND ($3::VARCHAR IS NULL OR m.season = $3)
-        ORDER BY m.match_date ASC
+          AND ($4::TIMESTAMPTZ IS NULL OR m.match_date >= $4)
+          AND ($5::TIMESTAMPTZ IS NULL OR m.match_date <= $5)
+        ORDER BY m.match_date ASC, m.id ASC
+        LIMIT $6 OFFSET $7
         "#,
     )
     .bind(filter.sport)
     .bind(filter.status)
     .bind(filter.season)
+    .bind(filter.date_from)
+    .bind(filter.date_to)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(&state.db)
     .await?;
 

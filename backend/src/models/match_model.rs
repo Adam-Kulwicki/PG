@@ -7,9 +7,46 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{types::Json, FromRow};
 
+/// Statystyki drużyny z jednego meczu NBA (połączenie `Base` oraz `Advanced` z `teamgamelogs`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BasketballTeamStats {
+    // --- Base (box-score) ---
+    pub min: Option<f64>,
+    pub fgm: Option<f64>,
+    pub fga: Option<f64>,
+    pub fg_pct: Option<f64>,
+    pub fg3m: Option<f64>,
+    pub fg3a: Option<f64>,
+    pub fg3_pct: Option<f64>,
+    pub ftm: Option<f64>,
+    pub fta: Option<f64>,
+    pub ft_pct: Option<f64>,
+    pub oreb: Option<f64>,
+    pub dreb: Option<f64>,
+    pub reb: Option<f64>,
+    pub ast: Option<f64>,
+    pub tov: Option<f64>,
+    pub stl: Option<f64>,
+    pub blk: Option<f64>,
+    pub blka: Option<f64>,
+    pub pf: Option<f64>,
+    pub pfd: Option<f64>,
+    pub plus_minus: Option<f64>,
+    // --- Advanced (metryki efektywności) ---
+    pub off_rating: Option<f64>,
+    pub def_rating: Option<f64>,
+    pub net_rating: Option<f64>,
+    pub pace: Option<f64>,
+    pub efg_pct: Option<f64>,
+    pub ts_pct: Option<f64>,
+    pub tm_tov_pct: Option<f64>,
+    pub oreb_pct: Option<f64>,
+    pub pie: Option<f64>,
+}
+
 /// Szczegóły specyficzne dla dyscypliny, przechowywane w kolumnie JSONB `match_details`.
 /// Wariant rozpoznawany jest po polu `sport_type` (np. `"football"`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "sport_type", rename_all = "snake_case")]
 pub enum MatchDetails {
     /// Piłka nożna: wynik do przerwy i kolejka.
@@ -18,10 +55,17 @@ pub enum MatchDetails {
         ht_away: Option<i32>,
         round: String,
     },
-    /// Koszykówka: punkty w kwartach (gospodarz, gość) i informacja o dogrywce.
+    /// Koszykówka: punkty w kwartach (gospodarz, gość), dogrywka oraz opcjonalne statystyki NBA.
     Basketball {
         quarters: Vec<(i32, i32)>,
         overtime: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        season_type: Option<String>,
+        /// Box ogranicza rozmiar wariantu enuma `MatchDetails` dla pozostałych dyscyplin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home_stats: Option<Box<BasketballTeamStats>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        away_stats: Option<Box<BasketballTeamStats>>,
     },
     /// Tenis: nawierzchnia, format meczu, gemy w setach oraz liczba asów.
     Tennis {

@@ -1,45 +1,25 @@
-name: Backend CI/CD
+name: Backend Build
 
 on:
   push:
     branches: [ prod, dev ]
-    paths: [ 'backend/**', '.github/workflows/backend-docker.yml' ]
-  pull_request:
-    branches: [ prod, dev]
-    paths: [ 'backend/**', '.github/workflows/backend-docker.yml' ]
+    paths: [ 'backend/**', '.github/workflows/backend-check.yml', '.github/workflows/backend-build.yml' ]
 
 env:
   IMAGE: ghcr.io/adam-kulwicki/bankrut-backend
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/prod' }}
 
 jobs:
   # 1. Szybki check kodu (Formatowanie, Clippy, Testy)
   check:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./backend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "./backend -> target"
-      - name: Format, Clippy & Test
-        run: |
-          cargo fmt --all -- --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test --locked
+    uses: ./.github/workflows/backend-check.yml
 
   # 2. Równoległa, natywna budowa na Laptopy (amd64) oraz Malinkę / Mac ARM (arm64)
   build-images:
     needs: check
-    if: github.event_name == 'push'
     permissions:
       contents: read
       packages: write

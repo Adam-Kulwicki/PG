@@ -34,15 +34,15 @@ Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI,
 ## 2. Architektura systemu
 
 ```text
-[Zewnętrzne API & Web Scrapery] (OpenFootball, Football-Data, BALLDONTLIE, Sackmann, ESPN)
+[Zewnętrzne API & Web Scrapery] (OpenFootball, Football-Data, stats.nba.com, BALLDONTLIE, Sackmann, ESPN)
               │
-              ▼  (Harmonogram w tle / Ingest ETL – idempotentny Upsert)
+              ▼  (Harmonogram w tle / Ingest ETL – idempotentny Upsert i deduplikacja)
      ┌──────────────────┐
      │  PostgreSQL 16   │◄─── Migracje SQLx + kolumny JSONB (indeksy GIN)
      └────────┬─────────┘
               │
               ▼
-     ┌──────────────────┐      GET /api/v1/matches (historia i terminarz)
+     ┌──────────────────┐      GET /api/v1/matches (historia, statystyki i terminarz)
      │                  │◄──────────────────────────────────────────────────────┐
      │  Backend Server  │                                                       │  Silniki Predykcyjne ML
      │  (Rust / Axum)   │──────────────────────────────────────────────────────►│  (Prawdopodobieństwa,
@@ -74,7 +74,7 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 | Dyscyplina | Status w backendzie | Dane historyczne | Dane bieżące |
 | :--- | :--- | :--- | :--- |
 | **Piłka nożna** | Zaimplementowane | OpenFootball (`football.json`) | Football-Data.org (`v4`) |
-| **Koszykówka** | Zaimplementowane | BALLDONTLIE (`v1/games`) / TheSportsDB | BALLDONTLIE (`v1/games`) / TheSportsDB |
+| **Koszykówka** | Zaimplementowane | `stats.nba.com` (`teamgamelogs`: `Base` + `Advanced`), fallback BALLDONTLIE (`v1/games`), opcjonalnie TheSportsDB (Euroliga) | `stats.nba.com` (rozegrane mecze + statystyki) + BALLDONTLIE (`v1/games`: terminarz, kwarty, czas UTC), opcjonalnie TheSportsDB (Euroliga) |
 | **Tenis ziemny** | Zaimplementowane | Archiwum Sackmanna (`Aneeshers/tennis-sackmann-archive`) | Publiczne API ESPN |
 | **Sport 4** | Planowane | — | — |
 | **Sport 5** | Planowane | — | — |
@@ -83,10 +83,10 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 
 ## 4. Stos technologiczny
 
-* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest`, `tower-http`.
+* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest` (z obsługą dekompresji `gzip`/`deflate`/`brotli`), `tower-http`.
 * **Baza danych:** PostgreSQL 16 (relacyjny rdzeń + polimorficzne szczegóły dyscyplin i metryki w `JSONB` z indeksami `GIN`).
 * **Silniki predykcyjne & Agenci AI:** Niezależne serwisy / procesy komunikujące się przez HTTP REST (`/api/v1/...`) oraz WebSocket (`/ws/agent`).
-* **Konteneryzacja i CI/CD:** Docker (multi-stage build), Docker Compose, GitHub Actions (automatyczne testy `fmt` / `clippy` / `cargo test` oraz budowanie obrazów Multi-Arch dla `linux/amd64` i `linux/arm64` w `ghcr.io`).
+* **Konteneryzacja i CI/CD:** Docker (multi-stage build), Docker Compose, GitHub Actions (`backend-check.yml` – walidacja PR: `fmt` / `clippy` / `cargo test`; `backend-build.yml` – budowanie obrazów Multi-Arch dla `linux/amd64` i `linux/arm64` do `ghcr.io` po `push` na `dev`/`prod`).
 
 ---
 
@@ -95,13 +95,15 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 ```text
 .
 ├── .github/workflows/
-│   └── backend-docker.yml   # Pipeline CI/CD (formatowanie, clippy, testy, obrazy amd64/arm64)
+│   ├── backend-check.yml    # Walidacja kodu na PR i jako wywołanie z backend-build.yml (fmt, clippy, cargo test)
+│   └── backend-build.yml    # Budowanie i publikacja obrazów Multi-Arch (amd64/arm64) do ghcr.io (dev/prod)
 ├── backend/                 # Centralny serwer giełdy zakładów, ETL i komunikacji WS (Rust/Axum)
 │   ├── migrations/          # Schemat bazy PostgreSQL i dane startowe (seed)
 │   ├── src/                 # Kod źródłowy backendu (api, domain, ingest, models, ws)
-│   ├── tests/               # Testy jednostkowe i domenowe
+│   ├── tests/               # Testy jednostkowe, domenowe oraz fixtures API
 │   ├── Dockerfile           # Wieloetapowy obraz produkcyjny
-│   └── README.md            # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
+│   └── README_backend.md    # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
+├── .env.example             # Szablon zmiennych środowiskowych do uruchomienia z Docker Compose
 └── docker-compose.yml       # Orkiestracja bazy PostgreSQL 16 i serwisu backend
 ```
 
@@ -112,23 +114,37 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 ### Wymagania
 * Docker + Docker Compose
 
-### 1. (Opcjonalnie) Konfiguracja kluczy API w `.env`
-Utwórz plik `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`), aby odblokować pobieranie bieżących meczów z zewnętrznych API:
+### 1. (Opcjonalnie) Konfiguracja środowiska w `.env`
+Skopiuj gotowy szablon [`.env.example`](.env.example) do pliku `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`):
+
+```bash
+cp .env.example .env
+```
+
+Źródła `stats.nba.com`, OpenFootball, archiwum Sackmanna oraz ESPN działają **bez kluczy API**. Wypełnienie opcjonalnych kluczy `FOOTBALL_DATA_API_KEY` i `BALLDONTLIE_API_KEY` odblokowuje dodatkowo bieżący terminarz Premier League oraz terminarz, kwarty i tryb awaryjny (fallback) dla NBA:
 
 ```env
+BACKEND_IMAGE_TAG=dev
 FOOTBALL_DATA_API_KEY=twoj_klucz_football_data
 BALLDONTLIE_API_KEY=twoj_klucz_balldontlie
+THESPORTSDB_EUROLEAGUE_ID=
+INGEST_NBA_SOURCE=auto
 INGEST_FOOTBALL_SEASONS=2023-24,2024-25
 INGEST_NBA_SEASONS=2023,2024
 INGEST_TENNIS_YEARS=2023,2024
 INGEST_TENNIS_TOURS=ATP
 ```
 
-*(Plik `.env` jest ignorowany przez Gita w `.gitignore`.)*
+*(Plik `.env` jest ignorowany przez Gita w `.gitignore`, natomiast `.env.example` jest szablonem wersjonowanym w repozytorium.)*
 
 ### 2. Uruchomienie usług
 ```bash
 docker compose up -d
+```
+
+Możesz wybrać inny tag obrazu backendu przez zmienną `BACKEND_IMAGE_TAG` (domyślnie `dev`), np.:
+```bash
+BACKEND_IMAGE_TAG=prod docker compose up -d
 ```
 
 Po starcie:

@@ -8,6 +8,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use utoipa::IntoParams;
 
 use crate::{
     error::{AppError, AppResult},
@@ -26,7 +27,8 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Opcjonalne filtry z query stringa; brak filtra = brak ograniczenia.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MatchFilter {
     /// Dyscyplina: "FOOTBALL", "BASKETBALL" lub "TENNIS" (wielkość liter bez znaczenia).
     pub sport: Option<String>,
@@ -53,7 +55,18 @@ pub fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> (Option<
 }
 
 /// GET /api/v1/matches – lista meczów, opcjonalnie filtrowana (`?sport=...&status=...&season=...&limit=...&offset=...&date_from=...&date_to=...`).
-async fn list_matches(
+#[utoipa::path(
+    get,
+    path = "/api/v1/matches",
+    tag = "Matches",
+    params(MatchFilter),
+    responses(
+        (status = 200, description = "Lista meczów z kursami MARKET_AVG", body = [MatchWithDetailsDto]),
+        (status = 400, description = "Niepoprawne parametry filtra", body = crate::error::ErrorResponse),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn list_matches(
     State(state): State<AppState>,
     Query(filter): Query<MatchFilter>,
 ) -> AppResult<Json<Vec<MatchWithDetailsDto>>> {
@@ -109,7 +122,20 @@ async fn list_matches(
 }
 
 /// GET /api/v1/matches/{id} – szczegóły jednego meczu; nieistniejący ID daje 404.
-async fn get_match_by_id(
+#[utoipa::path(
+    get,
+    path = "/api/v1/matches/{id}",
+    tag = "Matches",
+    params(
+        ("id" = i32, Path, description = "ID meczu")
+    ),
+    responses(
+        (status = 200, description = "Szczegóły meczu", body = MatchWithDetailsDto),
+        (status = 404, description = "Mecz nie istnieje", body = crate::error::ErrorResponse),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn get_match_by_id(
     State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> AppResult<Json<MatchWithDetailsDto>> {

@@ -131,6 +131,8 @@ backend/
 
 | Metoda | Ścieżka | Status sukcesu | Opis |
 | :--- | :--- | :--- | :--- |
+| `GET` | `/docs` | `200 OK` | Interaktywna dokumentacja Swagger UI (OpenAPI 3) |
+| `GET` | `/api-docs/openapi.json` | `200 OK` | Specyfikacja OpenAPI 3 w formacie JSON |
 | `GET` | `/health` | `200 OK` | Stan serwera, połączenia z bazą i liczba subskrybentów WS |
 | `GET` | `/api/v1/matches` | `200 OK` | Lista meczów z opcjonalnym filtrowaniem (`sport`, `status`, `season`), paginacją (`limit`, `offset`) i zakresem dat (`date_from`, `date_to`) |
 | `GET` | `/api/v1/matches/{id}` | `200 OK` | Szczegóły pojedynczego meczu z kursami `MARKET_AVG` i `match_details` |

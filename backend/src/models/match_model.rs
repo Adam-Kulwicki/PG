@@ -6,9 +6,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{types::Json, FromRow};
+use utoipa::ToSchema;
 
 /// Statystyki drużyny z jednego meczu NBA (połączenie `Base` oraz `Advanced` z `teamgamelogs`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct BasketballTeamStats {
     // --- Base (box-score) ---
     pub min: Option<f64>,
@@ -46,7 +47,7 @@ pub struct BasketballTeamStats {
 
 /// Szczegóły specyficzne dla dyscypliny, przechowywane w kolumnie JSONB `match_details`.
 /// Wariant rozpoznawany jest po polu `sport_type` (np. `"football"`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "sport_type", rename_all = "snake_case")]
 pub enum MatchDetails {
     /// Piłka nożna: wynik do przerwy i kolejka.
@@ -57,6 +58,7 @@ pub enum MatchDetails {
     },
     /// Koszykówka: punkty w kwartach (gospodarz, gość), dogrywka oraz opcjonalne statystyki NBA.
     Basketball {
+        #[schema(value_type = Vec<[i32; 2]>)]
         quarters: Vec<(i32, i32)>,
         overtime: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +73,7 @@ pub enum MatchDetails {
     Tennis {
         surface: String,
         best_of: u8,
+        #[schema(value_type = Vec<[u8; 2]>)]
         sets: Vec<(u8, u8)>,
         home_aces: Option<u16>,
         away_aces: Option<u16>,
@@ -115,7 +118,7 @@ pub struct MatchOdds {
 }
 
 /// Widok meczu zwracany przez `GET /api/v1/matches`, wzbogacony o nazwy uczestników i kursy.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct MatchWithDetailsDto {
     pub id: i32,
     pub sport: String,
@@ -130,6 +133,7 @@ pub struct MatchWithDetailsDto {
     pub home_score: Option<i32>,
     pub away_score: Option<i32>,
     pub winner: Option<String>,
+    #[schema(value_type = MatchDetails)]
     pub match_details: Json<MatchDetails>,
     pub odds_home: Option<Decimal>,
     pub odds_draw: Option<Decimal>,

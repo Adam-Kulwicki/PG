@@ -5,13 +5,15 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use utoipa::ToSchema;
 
 /// Agent obstawiający mecze przez WebSocket – posiada własny portfel (`bankroll`).
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct Agent {
     pub id: i32,
     pub name: String,
     #[serde(skip_serializing)]
+    #[schema(ignore)]
     // Klucz API nie jest serializowany, więc nie wycieknie przez publiczne endpointy (np. ranking).
     pub api_key: String,
     /// Opis strategii, np. "Kelly Criterion 1/4".
@@ -26,7 +28,7 @@ pub struct Agent {
 }
 
 /// Pojedynczy kupon postawiony przez agenta na wynik meczu.
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct Bet {
     pub id: i32,
     pub agent_id: i32,

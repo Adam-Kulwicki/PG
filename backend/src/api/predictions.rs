@@ -47,7 +47,19 @@ pub fn validate_probabilities(home: Decimal, draw: Decimal, away: Decimal) -> Ap
 ///
 /// Zapisuje (upsert) predykcję silnika i – dla meczów SCHEDULED – rozgłasza
 /// `MATCH_OPPORTUNITY` do wszystkich podłączonych agentów.
-async fn create_prediction(
+#[utoipa::path(
+    post,
+    path = "/api/v1/predictions",
+    tag = "Predictions",
+    request_body = CreatePredictionDto,
+    responses(
+        (status = 201, description = "Predykcja zapisana (upsert) i rozgłoszona przez WebSocket", body = Prediction),
+        (status = 400, description = "Niepoprawne prawdopodobieństwa lub pusta nazwa modelu", body = crate::error::ErrorResponse),
+        (status = 404, description = "Mecz nie istnieje", body = crate::error::ErrorResponse),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn create_prediction(
     State(state): State<AppState>,
     Json(payload): Json<CreatePredictionDto>,
 ) -> AppResult<(StatusCode, Json<Prediction>)> {

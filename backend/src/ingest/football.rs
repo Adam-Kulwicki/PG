@@ -7,7 +7,7 @@
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub use super::normalize_season_label;
 use super::{
@@ -34,7 +34,7 @@ const DEFAULT_KICKOFF_HOUR: u32 = 15;
 
 #[derive(Debug, Deserialize)]
 struct OpenFootballFile {
-    matches: Vec<OpenFootballMatch>,
+    matches: Vec<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -67,22 +67,39 @@ impl OpenFootballTeam {
 }
 
 #[derive(Debug, Deserialize)]
-struct OpenFootballScore {
-    /// Wynik po 90 minutach `[gospodarze, goście]`.
-    ft: Option<Vec<i32>>,
-    /// Wynik do przerwy `[gospodarze, goście]`.
-    ht: Option<Vec<i32>>,
+#[serde(untagged)]
+enum OpenFootballScore {
+    /// Bezpośrednia tablica `[gospodarze, goście]` jako wynik końcowy (bez `ht`).
+    Direct(Vec<i32>),
+    /// Standardowy obiekt z polami `ft` (po 90 min) i opcjonalnym `ht` (do przerwy).
+    Detailed {
+        ft: Option<Vec<i32>>,
+        ht: Option<Vec<i32>>,
+    },
 }
 
 /// Parsuje plik `en.1.json` z repozytorium OpenFootball.
-/// Mecze z nieczytelną datą są pomijane; mecz bez wyniku ma status `SCHEDULED`.
+/// Mecze z nieczytelną datą lub uszkodzonym pojedynczym rekordem są pomijane;
+/// mecz bez wyniku ma status `SCHEDULED`.
 pub fn parse_openfootball(json: &str, season_label: &str) -> AppResult<Vec<IngestedMatch>> {
     let file: OpenFootballFile = serde_json::from_str(json)
         .map_err(|e| AppError::ExternalData(format!("OpenFootball: {}", e)))?;
     let season = normalize_season_label(season_label);
 
     let mut result = Vec::with_capacity(file.matches.len());
-    for m in file.matches {
+    for (idx, raw) in file.matches.into_iter().enumerate() {
+        let m: OpenFootballMatch = match serde_json::from_value(raw) {
+            Ok(m) => m,
+            Err(err) => {
+                tracing::warn!(
+                    season = %season,
+                    index = idx,
+                    "OpenFootball: pominięto niepoprawny rekord meczu: {}",
+                    err
+                );
+                continue;
+            }
+        };
         let Ok(date) = NaiveDate::parse_from_str(&m.date, "%Y-%m-%d") else {
             continue;
         };
@@ -94,7 +111,8 @@ pub fn parse_openfootball(json: &str, season_label: &str) -> AppResult<Vec<Inges
         let match_date = date.and_time(time).and_utc();
 
         let (ft, ht) = match &m.score {
-            Some(score) => (score.ft.as_deref(), score.ht.as_deref()),
+            Some(OpenFootballScore::Direct(ft)) => (Some(ft.as_slice()), None),
+            Some(OpenFootballScore::Detailed { ft, ht }) => (ft.as_deref(), ht.as_deref()),
             None => (None, None),
         };
         let full_time = ft.and_then(|v| match v {

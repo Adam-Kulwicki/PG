@@ -1,7 +1,10 @@
 // tests/ingest_football.rs
-use backend::ingest::{
-    football::{normalize_season_label, parse_football_data, parse_openfootball},
-    short_season_label, winner_from_scores,
+use backend::{
+    ingest::{
+        football::{normalize_season_label, parse_football_data, parse_openfootball},
+        short_season_label, winner_from_scores,
+    },
+    models::match_model::MatchDetails,
 };
 
 /// Etykiety sezonów z różnych źródeł sprowadzamy do formatu `RRRR-RRRR`.
@@ -62,6 +65,52 @@ fn parses_openfootball_matches() {
 #[test]
 fn rejects_malformed_openfootball_json() {
     assert!(parse_openfootball("not json", "2023-24").is_err());
+}
+
+/// OpenFootball bywa zapisywany z `"score": [0, 0]` bez `ft`/`ht`, a uszkodzony pojedynczy
+/// rekord nie powinien przerywać parsowania pozostałych meczów w sezonie.
+#[test]
+fn parses_openfootball_direct_score_and_skips_malformed_entry() {
+    let json = r#"{
+        "name": "English Premier League 2025/26",
+        "matches": [
+            {"round": "Matchday 1", "date": "2025-08-16", "time": "12:30",
+             "team1": "Aston Villa FC", "team2": "Newcastle United FC",
+             "score": [0, 0]},
+            {"round": "Matchday 1", "date": "2025-08-16", "time": "15:00",
+             "team1": "Broken FC", "team2": "Invalid FC",
+             "score": 0},
+            {"round": "Matchday 1", "date": "2025-08-16", "time": "15:00",
+             "team1": "Brighton & Hove Albion FC", "team2": "Fulham FC",
+             "score": {"ft": [1, 1], "ht": [0, 0]}}
+        ]
+    }"#;
+
+    let matches = parse_openfootball(json, "2025-26").unwrap();
+    assert_eq!(matches.len(), 2);
+
+    let direct = &matches[0];
+    assert_eq!(direct.season, "2025-2026");
+    assert_eq!(direct.status, "FINISHED");
+    assert_eq!(direct.home.name, "Aston Villa FC");
+    assert_eq!(direct.away.name, "Newcastle United FC");
+    assert_eq!((direct.home_score, direct.away_score), (Some(0), Some(0)));
+    assert_eq!(direct.winner.as_deref(), Some("DRAW"));
+    match &direct.details {
+        MatchDetails::Football {
+            ht_home,
+            ht_away,
+            round,
+        } => {
+            assert_eq!((*ht_home, *ht_away), (None, None));
+            assert_eq!(round, "Matchday 1");
+        }
+        other => panic!("Nieoczekiwany wariant MatchDetails: {:?}", other),
+    }
+
+    let valid = &matches[1];
+    assert_eq!(valid.home.name, "Brighton & Hove Albion FC");
+    assert_eq!((valid.home_score, valid.away_score), (Some(1), Some(1)));
 }
 
 /// Football-Data: wynik zapisujemy tylko dla zakończonych meczów, a mecze bez nazw drużyn pomijamy.

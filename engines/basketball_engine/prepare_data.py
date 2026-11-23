@@ -1,12 +1,25 @@
 import time
 import pandas as pd
-from nba_api.stats.endpoints import teamgamelogs
+from nba_api.stats.endpoints import teamgamelogs, leaguedashplayerstats
+
+BASE_SIM_COLS = [
+    "OFF_RATING",
+    "DEF_RATING",
+    "PACE",
+    "EFG_PCT",
+    "TS_PCT",
+    "TM_TOV_PCT",
+    "OREB_PCT",
+    "PIE",
+]
+STATS_COLS = BASE_SIM_COLS + ["NET_RATING"]
+adv_cols = ["GAME_ID", "TEAM_ID"] + STATS_COLS
 
 
 # Funkcja odpowiedzialna za pobranie wszystkich meczów z NBA z lat 2018 do 2026
 def fetch_nba_info(
     start_year: int = 2018,
-    end_year: int = 2025,
+    end_year: int = 2026,
     season_types: tuple = ("Regular Season", "Playoffs"),
 ) -> pd.DataFrame:
     all_info = []
@@ -16,7 +29,7 @@ def fetch_nba_info(
         # Pobieramy statystyki zarówno z playoffów jak i sezonu regularnego
         for s_type in season_types:
             try:
-                ## Pobranie statystyk podstawowych tj. PTS, FGA, FTA, OREB, TOV, WL, MATCHUP
+                # Pobranie statystyk podstawowych tj. PTS, FGA, FTA, OREB, TOV, WL, MATCHUP
                 base_df = teamgamelogs.TeamGameLogs(
                     season_nullable=season_str,
                     season_type_nullable=s_type,
@@ -32,25 +45,11 @@ def fetch_nba_info(
                     measure_type_player_game_logs_nullable="Advanced",
                     timeout=60,
                 ).get_data_frames()[0]
-                time.sleep(0.7)  # Znwou czekamy chwilę dla bezpieczeństwa IP
+                time.sleep(0.7)  # Znowu czekamy chwilę dla bezpieczeństwa IP
 
                 if base_df.empty or adv_df.empty:
                     continue
 
-                # Wybieramy tylko unikalne kolumny z tabeli Advanced
-                adv_cols = [
-                    "GAME_ID",
-                    "TEAM_ID",
-                    "OFF_RATING",
-                    "DEF_RATING",
-                    "NET_RATING",
-                    "PACE",
-                    "EFG_PCT",
-                    "TS_PCT",
-                    "TM_TOV_PCT",
-                    "OREB_PCT",
-                    "PIE",
-                ]
                 # Łączymy wszystkie cechy do jednej tabeli wybierając tylko
                 # pożądane (z adv_cols)
                 merged = pd.merge(
@@ -69,6 +68,36 @@ def fetch_nba_info(
     return pd.concat(all_info, ignore_index=True)
 
 
+def fetch_player_ratings(season: str = "2026-27") -> pd.DataFrame:
+    # Pobieranie statystyk aktywnych graczy w sezonie i liczy ich rating (wpływ na grę)
+    df = leaguedashplayerstats.LeagueDashPlayerStats(
+        season=season,
+        measure_type_detailed_defense="Advanced",
+        per_mode_detailed="PerGame",
+        timeout=60,
+    ).get_data_frames()[0]
+    time.sleep(0.7)
+
+    cols = [
+        "PLAYER_ID",
+        "PLAYER_NAME",
+        "TEAM_ABBREVIATION",
+        "GP",
+        "MIN",
+        "OFF_RATING",
+        "DEF_RATING",
+        "NET_RATING",
+        "PIE",
+        "USG_PCT",
+    ]
+    df = df[cols].copy()
+    df["MIN_SHARE"] = (df["MIN"] / 240.0).clip(upper=0.20)
+    df["PLAYER_RATING"] = (df["PIE"] * 100 * 0.6 + (df["NET_RATING"] + 15) * 0.4) * (
+        df["MIN"] / 36.0
+    )
+    return df
+
+
 # Póki co sprawdzam na jednym sezonie czy wszystko śmiga
 if __name__ == "__main__":
     df_test = fetch_nba_info(
@@ -76,3 +105,7 @@ if __name__ == "__main__":
     )
     print("Wymiary tabeli:", df_test.shape)
     print(df_test[["GAME_DATE", "MATCHUP", "PTS", "OFF_RATING", "PACE"]].head())
+
+    df2_test = fetch_player_ratings(season="2026-27")
+    print("Wymiary tabeli: ", df2_test.shape)
+    print(df2_test[["PLAYER_ID", "PLAYER_NAME", "PIE"]].head())

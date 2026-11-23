@@ -18,6 +18,7 @@ use std::{
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
+use utoipa::ToSchema;
 
 use crate::{
     domain::settlement,
@@ -32,7 +33,7 @@ use crate::{
 const DEFAULT_BET_WINDOW_MS: u64 = 500;
 const MAX_BET_WINDOW_MS: u64 = 30_000;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BacktestParams {
     /// Sezon do odtworzenia, np. "2025-2026"
     pub season: String,
@@ -46,7 +47,7 @@ pub struct BacktestParams {
     pub reset_agents: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BacktestPlan {
     pub season: String,
     pub sport: Option<String>,

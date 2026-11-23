@@ -36,13 +36,13 @@ Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI,
 ```text
 [Zewnętrzne API & Web Scrapery] (football-data.co.uk, Football-Data.org, ClubElo, stats.nba.com, BALLDONTLIE, Sackmann, ESPN)
               │
-              ▼  (Harmonogram w tle / Ingest ETL – idempotentny Upsert)
+              ▼  (Harmonogram w tle / Ingest ETL – idempotentny Upsert i deduplikacja)
      ┌──────────────────┐
      │  PostgreSQL 16   │◄─── Migracje SQLx + kolumny JSONB (indeksy GIN)
      └────────┬─────────┘
               │
               ▼
-     ┌──────────────────┐      GET /api/v1/matches (historia i terminarz)
+     ┌──────────────────┐      GET /api/v1/matches (historia, statystyki i terminarz)
      │                  │◄──────────────────────────────────────────────────────┐
      │  Backend Server  │                                                       │  Silniki Predykcyjne ML
      │  (Rust / Axum)   │──────────────────────────────────────────────────────►│  (Prawdopodobieństwa,
@@ -83,10 +83,10 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 
 ## 4. Stos technologiczny
 
-* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest`, `tower-http`.
+* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest` (z obsługą dekompresji `gzip`/`deflate`/`brotli`), `tower-http`.
 * **Baza danych:** PostgreSQL 16 (relacyjny rdzeń + polimorficzne szczegóły dyscyplin i metryki w `JSONB` z indeksami `GIN`).
 * **Silniki predykcyjne & Agenci AI:** Niezależne serwisy / procesy komunikujące się przez HTTP REST (`/api/v1/...`) oraz WebSocket (`/ws/agent`).
-* **Konteneryzacja i CI/CD:** Docker (multi-stage build), Docker Compose, GitHub Actions (automatyczne testy `fmt` / `clippy` / `cargo test` oraz budowanie obrazów Multi-Arch dla `linux/amd64` i `linux/arm64` w `ghcr.io`).
+* **Konteneryzacja i CI/CD:** Docker (multi-stage build), Docker Compose, GitHub Actions (`backend-check.yml` – walidacja PR: `fmt` / `clippy` / `cargo test`; `backend-build.yml` – budowanie obrazów Multi-Arch dla `linux/amd64` i `linux/arm64` do `ghcr.io` po `push` na `dev`/`prod`).
 
 ---
 
@@ -96,13 +96,15 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 .
 ├── .env.example             # Szablon zmiennych środowiskowych (skopiuj do .env)
 ├── .github/workflows/
-│   └── backend-docker.yml   # Pipeline CI/CD (formatowanie, clippy, testy, obrazy amd64/arm64)
+│   ├── backend-check.yml    # Walidacja kodu na PR i jako wywołanie z backend-build.yml (fmt, clippy, cargo test)
+│   └── backend-build.yml    # Budowanie i publikacja obrazów Multi-Arch (amd64/arm64) do ghcr.io (dev/prod)
 ├── backend/                 # Centralny serwer giełdy zakładów, ETL i komunikacji WS (Rust/Axum)
 │   ├── migrations/          # Schemat bazy PostgreSQL i dane startowe (seed)
 │   ├── src/                 # Kod źródłowy backendu (api, domain, ingest, models, ws)
-│   ├── tests/               # Testy jednostkowe i domenowe (+ fixtures/)
+│   ├── tests/               # Testy jednostkowe, domenowe oraz fixtures API
 │   ├── Dockerfile           # Wieloetapowy obraz produkcyjny
 │   └── README_backend.md    # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
+├── .env.example             # Szablon zmiennych środowiskowych do uruchomienia z Docker Compose
 └── docker-compose.yml       # Orkiestracja bazy PostgreSQL 16 i serwisu backend
 ```
 
@@ -125,6 +127,11 @@ cp .env.example .env
 ### 2. Uruchomienie usług
 ```bash
 docker compose up -d
+```
+
+Możesz wybrać inny tag obrazu backendu przez zmienną `BACKEND_IMAGE_TAG` (domyślnie `dev`), np.:
+```bash
+BACKEND_IMAGE_TAG=prod docker compose up -d
 ```
 
 Po starcie:

@@ -6,8 +6,18 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde_json::json;
+use serde::Serialize;
 use thiserror::Error;
+use utoipa::ToSchema;
+
+/// Standardowa odpowiedź błędu zwracana przez REST API.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorResponse {
+    #[schema(example = "Mecz o ID 999 nie istnieje")]
+    pub error: String,
+    #[schema(example = "NOT_FOUND")]
+    pub code: String,
+}
 
 /// Wszystkie błędy, które mogą wystąpić w handlerach REST, WebSocket i logice domenowej.
 #[derive(Error, Debug)]
@@ -92,10 +102,10 @@ impl IntoResponse for AppError {
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
         };
 
-        let body = Json(json!({
-            "error": message,
-            "code": error_code,
-        }));
+        let body = Json(ErrorResponse {
+            error: message,
+            code: error_code.to_string(),
+        });
 
         (status, body).into_response()
     }

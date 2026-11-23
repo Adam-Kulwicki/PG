@@ -17,6 +17,7 @@ services:
 
   backend:
     image: ghcr.io/adam-kulwicki/bankrut-backend:${BACKEND_IMAGE_TAG:-dev}
+    build: ./backend
     env_file:
       - path: .env
         required: false

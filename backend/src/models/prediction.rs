@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{types::Json, FromRow};
+use utoipa::ToSchema;
 
 /// Zarejestrowany silnik predykcyjny (np. XGBoost, Elo, Poisson) w konkretnej wersji.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -20,7 +21,7 @@ pub struct PredictionModel {
 }
 
 /// Prognoza modelu dla jednego meczu (jeden model = jedna predykcja na mecz).
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, ToSchema)]
 pub struct Prediction {
     pub id: i32,
     pub match_id: i32,
@@ -30,12 +31,13 @@ pub struct Prediction {
     pub prob_draw: Decimal,
     pub prob_away: Decimal,
     /// Dodatkowe metryki modelu (np. expected_goals) w JSONB.
+    #[schema(value_type = Object)]
     pub extra_metrics: Json<Value>,
     pub created_at: DateTime<Utc>,
 }
 
 /// Dane przyjmowane od silników predykcyjnych w `POST /api/v1/predictions`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct CreatePredictionDto {
     pub match_id: i32,
     /// Nazwa modelu – model rejestrowany jest automatycznie przy pierwszej predykcji.
@@ -46,5 +48,6 @@ pub struct CreatePredictionDto {
     /// Pomijane dla sportów bez remisu (traktowane jako 0).
     pub prob_draw: Option<Decimal>,
     pub prob_away: Decimal,
+    #[schema(value_type = Option<Object>)]
     pub extra_metrics: Option<Value>,
 }

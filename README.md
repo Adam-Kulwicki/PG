@@ -136,7 +136,7 @@ BACKEND_IMAGE_TAG=prod docker compose up -d
 
 Po starcie:
 * Backend API dostępny jest pod adresem `http://localhost:3000` (diagnostyka: `GET http://localhost:3000/health`).
-* Interaktywna dokumentacja **Swagger UI** dostępna jest pod adresem `http://localhost:3000/docs` (surowy JSON: `GET /openapi.json`).
+* Interaktywna dokumentacja **Swagger UI** dostępna jest pod adresem `http://localhost:3000/docs` (surowy JSON: `GET /api-docs/openapi.json`).
 * WebSocket dla agentów AI nasłuchuje pod adresem `ws://localhost:3000/ws/agent`.
 * PostgreSQL uruchamia migracje automatycznie i ładuje przykładowe dane startowe (3 dyscypliny, 6 meczów, przykładowe modele i 2 agentów testowych).
 

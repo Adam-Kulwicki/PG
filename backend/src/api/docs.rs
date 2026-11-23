@@ -31,6 +31,8 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::api::health::HealthResponse,
             crate::models::match_model::MatchWithDetailsDto,
             crate::models::match_model::MatchDetails,
+            crate::models::match_model::FootballTeamStats,
+            crate::models::match_model::FootballPreMatchElo,
             crate::models::match_model::BasketballTeamStats,
             crate::models::bet::Agent,
             crate::api::agents::CreateAgentDto,

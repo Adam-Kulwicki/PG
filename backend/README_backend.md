@@ -160,8 +160,8 @@ Sprawdza połączenie z PostgreSQL (`SELECT 1`) i zwraca liczbę aktywnych odbio
 }
 ```
 
-#### `GET /docs` oraz `GET /openapi.json`
-Interaktywna dokumentacja Swagger UI (`/docs`) ładująca specyfikację OpenAPI 3.0.3 z `/openapi.json`.
+#### `GET /docs` oraz `GET /api-docs/openapi.json`
+Interaktywna dokumentacja Swagger UI (`/docs`) ładująca specyfikację OpenAPI 3 z `/api-docs/openapi.json`.
 
 #### `GET /api/v1/matches`
 Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_date`, a następnie `id` (`ORDER BY m.match_date ASC, m.id ASC`), wraz z nazwami uczestników i kursami `MARKET_AVG`.

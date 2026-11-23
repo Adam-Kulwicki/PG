@@ -46,7 +46,7 @@ pub struct BasketballTeamStats {
 }
 
 /// Statystyki drużyny z jednego meczu piłkarskiego (`football-data.co.uk`, post-match).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FootballTeamStats {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xg: Option<f64>,
@@ -65,7 +65,7 @@ pub struct FootballTeamStats {
 }
 
 /// Przedmeczowy ranking siły drużyn na dzień przed meczem (ClubElo, pre-match).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct FootballPreMatchElo {
     pub home_elo: Option<f64>,
     pub away_elo: Option<f64>,

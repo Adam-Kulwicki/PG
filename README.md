@@ -34,7 +34,7 @@ Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI,
 ## 2. Architektura systemu
 
 ```text
-[Zewnętrzne API & Web Scrapery] (OpenFootball, Football-Data, BALLDONTLIE, Sackmann, ESPN)
+[Zewnętrzne API & Web Scrapery] (football-data.co.uk, Football-Data.org, ClubElo, stats.nba.com, BALLDONTLIE, Sackmann, ESPN)
               │
               ▼  (Harmonogram w tle / Ingest ETL – idempotentny Upsert)
      ┌──────────────────┐
@@ -73,7 +73,7 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 
 | Dyscyplina | Status w backendzie | Dane historyczne | Dane bieżące |
 | :--- | :--- | :--- | :--- |
-| **Piłka nożna** | Zaimplementowane | OpenFootball (`football.json`) | Football-Data.org (`v4`) |
+| **Piłka nożna** | Zaimplementowane | `football-data.co.uk` (`xG`/strzały/rożne/HT) + `clubelo.com` (`D - 1`) | `football-data.co.uk` / Football-Data.org (`v4`) + `clubelo.com` |
 | **Koszykówka** | Zaimplementowane | BALLDONTLIE (`v1/games`) / TheSportsDB | BALLDONTLIE (`v1/games`) / TheSportsDB |
 | **Tenis ziemny** | Zaimplementowane | Archiwum Sackmanna (`Aneeshers/tennis-sackmann-archive`) | Publiczne API ESPN |
 | **Sport 4** | Planowane | — | — |
@@ -119,6 +119,7 @@ Utwórz plik `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`
 FOOTBALL_DATA_API_KEY=twoj_klucz_football_data
 BALLDONTLIE_API_KEY=twoj_klucz_balldontlie
 INGEST_FOOTBALL_SEASONS=2023-24,2024-25
+INGEST_FOOTBALL_LEAGUES=PL
 INGEST_NBA_SEASONS=2023,2024
 INGEST_TENNIS_YEARS=2023,2024
 INGEST_TENNIS_TOURS=ATP

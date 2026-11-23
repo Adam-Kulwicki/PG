@@ -28,7 +28,7 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
 ### Warstwa ETL / Ingest (`src/ingest/`)
 * **Cykliczny harmonogram w tle** (`spawn_scheduler`) uruchamiany przy starcie serwera (sterowany przez `INGEST_ENABLED` oraz `INGEST_INTERVAL_MINUTES`), z ręcznym wyzwalaniem przez REST API.
 * **Wspólna obsługa HTTP i zapisu (`src/ingest/mod.rs`):** ponawianie zapytań po `429 Too Many Requests` (do 3 razy po 60 s) oraz idempotentny zapis `store_matches` (`INSERT ... ON CONFLICT DO UPDATE`), chroniący zakończone mecze (`FINISHED`) przed nadpisaniem statusem niezakończonym.
-* **Piłka nożna (`src/ingest/football.rs`):** historia Premier League z **OpenFootball** (`football.json`) + bieżący sezon z **Football-Data.org v4** (mapowanie wyników `FT`/`HT` i statusów).
+* **Piłka nożna (`src/ingest/football/`):** historia i statystyki meczowe (`xG`, strzały, strzały celne, rożne, faule, kartki, wynik HT) z **`football-data.co.uk`** (CSV + `fixtures.csv`), przedmeczowe ratingi Elo (`D - 1`) i prawdopodobieństwa `/Fixtures` z **`clubelo.com`** oraz opcjonalne uzupełnienie bieżącego sezonu z **Football-Data.org v4** (dokładne `utcDate`, kolejki, statusy `LIVE`/`POSTPONED`/`CANCELLED`) dla lig Top 5 (`PL, PD, BL1, SA, FL1`).
 * **Koszykówka (`src/ingest/basketball.rs`):** **BALLDONTLIE API (`v1/games`)** z paginacją kursorową i limitem 12 s między stronami (dla darmowego limitu 5 req/min) + opcjonalna **Euroliga** z **TheSportsDB**.
 * **Tenis (`src/ingest/tennis.rs`):** archiwalne pliki CSV z mirrora **`Aneeshers/tennis-sackmann-archive`** (ATP/WTA, pomijanie walkowerów `W/O` i `DEF`, rozkładanie rund drabinki na kolejne dni, deterministyczne losowanie strony `home`/`away` na podstawie FNV-1a przeciwko *data leakage*) + bieżące drabinki z **ESPN Scoreboard API** (wyłącznie single, pomijanie zawodników `TBD`).
 
@@ -104,7 +104,11 @@ backend/
     │   └── backtester.rs       # Symulator historyczny dzień po dniu
     └── ingest/
         ├── mod.rs              # Harmonogram, retry 429, transakcyjny store_matches
-        ├── football.rs         # OpenFootball + Football-Data.org
+        ├── football/           # football-data.co.uk + Football-Data.org + clubelo.com (Top 5 lig)
+        │   ├── mod.rs          # Orkiestracja sync() i Football-Data.org v4
+        │   ├── teams.rs        # Normalizacja nazw drużyn, slugi ClubElo, mapa lig
+        │   ├── football_data_uk.rs # Klient i parser CSV football-data.co.uk + fixtures.csv
+        │   └── clubelo.rs      # Parser clubelo.com (D - 1 z wykresu i /Fixtures)
         ├── basketball.rs       # BALLDONTLIE + TheSportsDB
         └── tennis.rs           # Mirror Sackmanna + ESPN Scoreboard
 ```
@@ -286,12 +290,15 @@ Wszystkie ustawienia wczytywane są w `src/config.rs`:
 | `HOST` | Nie | `0.0.0.0` | Adres nasłuchu serwera Axum |
 | `PORT` | Nie | `3000` | Port serwera HTTP/WS |
 | `RUST_LOG` | Nie | `backend=debug,tower_http=info,sqlx=warn` | Poziom logowania (`tracing`) |
-| `FOOTBALL_DATA_API_KEY` | Nie | `None` | Klucz do Football-Data.org (bieżący sezon piłki nożnej) |
+| `FOOTBALL_DATA_API_KEY` | Nie | `None` | Klucz do Football-Data.org (opcjonalne uzupełnienie bieżącego sezonu piłki nożnej; bez niego działa `football-data.co.uk` + `clubelo.com`) |
 | `BALLDONTLIE_API_KEY` | Nie | `None` | Klucz do BALLDONTLIE (NBA) |
 | `THESPORTSDB_EUROLEAGUE_ID` | Nie | `None` | ID ligi Euroligi w TheSportsDB (bez niego Euroliga jest pomijana) |
 | `INGEST_ENABLED` | Nie | `true` | Czy uruchamiać automatyczny harmonogram ETL w tle |
 | `INGEST_INTERVAL_MINUTES` | Nie | `60` | Odstęp (w minutach) między cyklami ingestu |
-| `INGEST_FOOTBALL_SEASONS` | Nie | `[]` *(2 ostatnie sezony)* | Lista sezonów OpenFootball rozdzielona przecinkami, np. `2023-24,2024-25` |
+| `INGEST_FOOTBALL_SOURCE` | Nie | `auto` | Źródło meczów piłki nożnej: `auto`, `football_data_uk`, `football_data` |
+| `INGEST_FOOTBALL_SEASONS` | Nie | `[]` *(2 ostatnie sezony)* | Lista sezonów historycznych piłki nożnej, np. `2023-24,2024-25`, `2023-2024` lub `2023` |
+| `INGEST_FOOTBALL_LEAGUES` | Nie | `PL` | Lista kodów lig Top 5 rozdzielona przecinkami (`PL,PD,BL1,SA,FL1`) |
+| `INGEST_FOOTBALL_CLUBELO_ENABLED` | Nie | `true` | Czy wzbogacać mecze piłkarskie o przedmeczowe ratingi ClubElo (`D - 1`) |
 | `INGEST_NBA_SEASONS` | Nie | `[]` *(2 ostatnie sezony)* | Lista lat startu sezonów NBA, np. `2023,2024` |
 | `INGEST_TENNIS_YEARS` | Nie | `[]` *(2 ostatnie lata)* | Lista lat dla archiwum Sackmanna, np. `2023,2024` |
 | `INGEST_TENNIS_TOURS` | Nie | `ATP` | Toury tenisowe do synchronizacji (`ATP`, `WTA`) |

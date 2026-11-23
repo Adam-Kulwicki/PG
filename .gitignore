@@ -10,3 +10,4 @@ local/
 # PLIKI ENV
 .env
 .env.*
+!.env.example

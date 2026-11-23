@@ -98,6 +98,35 @@ def fetch_player_ratings(season: str = "2026-27") -> pd.DataFrame:
     return df
 
 
+def calculate_missing_penalty(
+    players_df: pd.DataFrame | None,
+    team_abbr: str,
+    missing_players: list[str] | None,
+) -> tuple[float, float]:
+    # Wylicza korektę (off_penalty, def_penalty) za brakujących zawodników.
+    if players_df is None or not missing_players:
+        return 0.0, 0.0
+
+    team_roster = players_df[players_df["TEAM_ABBREVIATION"] == team_abbr.upper()]
+    out_df = team_roster[team_roster["PLAYER_NAME"].isin(missing_players)]
+    if out_df.empty:
+        return 0.0, 0.0
+    # Brak zawodnika jest oparty na PIE czyli Player Impact Estimate
+    # Gdy gwiazda odpada (ok 0.18 PIE) wproawdzamy za niego srednia wartosc
+    # ligowa czyli 0.10. Jeżeli wchodzi ktos ta wartość jest poniżej czyli wypadł
+    # rezerwowy albo słaby zawodnik jego brak nie osłabia drużyny (kara = 0)
+    # Całość skalujemy do przez 240 bo 5 * 48 (12 minut jedna kwarta).
+    # Całość skalujemy potem do realny punktów na 100 posiadań
+    impact_loss = (
+        (out_df["PIE"] - 0.10).clip(lower=0) * out_df["MIN_SHARE"] * 250.0
+    ).sum()
+
+    # A następnie rozbijamy na znaczenie w ofensywie i defensywie
+    off_penalty = -float(impact_loss * 0.6)
+    def_penalty = float(impact_loss * 0.4)
+    return off_penalty, def_penalty
+
+
 # Póki co sprawdzam na jednym sezonie czy wszystko śmiga
 if __name__ == "__main__":
     df_test = fetch_nba_info(

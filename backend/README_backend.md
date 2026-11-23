@@ -300,6 +300,10 @@ Wszystkie ustawienia wczytywane są w `src/config.rs`:
 | `INGEST_FOOTBALL_LEAGUES` | Nie | `PL` | Lista kodów lig Top 5 rozdzielona przecinkami (`PL,PD,BL1,SA,FL1`) |
 | `INGEST_FOOTBALL_CLUBELO_ENABLED` | Nie | `true` | Czy wzbogacać mecze piłkarskie o przedmeczowe ratingi ClubElo (`D - 1`) |
 | `INGEST_NBA_SEASONS` | Nie | `[]` *(2 ostatnie sezony)* | Lista lat startu sezonów NBA, np. `2023,2024` |
+| `INGEST_NBA_SOURCE` | Nie | `auto` | Źródło meczów NBA: `auto`, `nba_stats`, `balldontlie` |
+| `NBA_API_PROXY` | Nie | `None` | Opcjonalny adres proxy HTTP/HTTPS dla `stats.nba.com` (np. `http://user:pass@host:port`) |
+| `NBA_STATS_TIMEOUT_SECS` | Nie | `90` | Limit czasu (w sekundach) pojedynczego zapytania do `stats.nba.com` |
+| `NBA_STATS_DELAY_MS` | Nie | `1500` | Pauza (w milisekundach) między zapytaniami do `stats.nba.com` |
 | `INGEST_TENNIS_YEARS` | Nie | `[]` *(2 ostatnie lata)* | Lista lat dla archiwum Sackmanna, np. `2023,2024` |
 | `INGEST_TENNIS_TOURS` | Nie | `ATP` | Toury tenisowe do synchronizacji (`ATP`, `WTA`) |
 

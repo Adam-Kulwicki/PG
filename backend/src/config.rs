@@ -81,6 +81,12 @@ pub struct Config {
     pub ingest_nba_seasons: Vec<i32>,
     /// Strategia wyboru źródła danych NBA (`INGEST_NBA_SOURCE`, domyślnie `auto`).
     pub ingest_nba_source: NbaIngestSource,
+    /// Opcjonalne proxy HTTP/HTTPS wyłącznie dla `stats.nba.com` (`NBA_API_PROXY`, np. dla serwerów chmurowych).
+    pub nba_api_proxy: Option<String>,
+    /// Limit czasu pojedynczego zapytania do `stats.nba.com` w sekundach (`NBA_STATS_TIMEOUT_SECS`, domyślnie `90`).
+    pub nba_stats_timeout_secs: u64,
+    /// Pauza między kolejnymi zapytaniami do `stats.nba.com` w ms (`NBA_STATS_DELAY_MS`, domyślnie `1500`).
+    pub nba_stats_delay_ms: u64,
     /// Lata historyczne tenisa z archiwum Sackmanna, np. `2023,2024` (`INGEST_TENNIS_YEARS`).
     pub ingest_tennis_years: Vec<i32>,
     /// Toury tenisowe do importu: `ATP`, `WTA` (`INGEST_TENNIS_TOURS`, domyślnie `ATP`).
@@ -180,6 +186,16 @@ impl Config {
             None => NbaIngestSource::Auto,
         };
 
+        let nba_api_proxy = env_non_empty("NBA_API_PROXY");
+        let nba_stats_timeout_secs = env::var("NBA_STATS_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(90);
+        let nba_stats_delay_ms = env::var("NBA_STATS_DELAY_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .unwrap_or(1500);
+
         let mut ingest_tennis_tours: Vec<String> = env_list::<String>("INGEST_TENNIS_TOURS")
             .into_iter()
             .map(|t| t.to_ascii_uppercase())
@@ -197,6 +213,9 @@ impl Config {
             ingest_football_leagues,
             ingest_nba_seasons: env_list("INGEST_NBA_SEASONS"),
             ingest_nba_source,
+            nba_api_proxy,
+            nba_stats_timeout_secs,
+            nba_stats_delay_ms,
             ingest_tennis_years: env_list("INGEST_TENNIS_YEARS"),
             ingest_tennis_tours,
             thesportsdb_euroleague_id: env_non_empty("THESPORTSDB_EUROLEAGUE_ID"),

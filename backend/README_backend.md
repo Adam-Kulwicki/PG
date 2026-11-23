@@ -27,9 +27,9 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
 
 ### Warstwa ETL / Ingest (`src/ingest/`)
 * **Cykliczny harmonogram w tle** (`spawn_scheduler`) uruchamiany przy starcie serwera (sterowany przez `INGEST_ENABLED` oraz `INGEST_INTERVAL_MINUTES`), z ręcznym wyzwalaniem przez REST API.
-* **Wspólna obsługa HTTP i zapisu (`src/ingest/mod.rs`):** ponawianie zapytań po `429 Too Many Requests` (do 3 razy po 60 s) oraz idempotentny zapis `store_matches` (`INSERT ... ON CONFLICT DO UPDATE`), chroniący zakończone mecze (`FINISHED`) przed nadpisaniem statusem niezakończonym.
+* **Wspólna obsługa HTTP i zapisu (`src/ingest/mod.rs`):** ponawianie zapytań po `429 Too Many Requests` / `5xx` / timeoutach (`fetch_text` i `fetch_text_with_timeout`) oraz idempotentny zapis `store_matches` z dwuetapową deduplikacją (`external_ids @>` oraz parą drużyn w oknie czasowym ±36h), symetrycznym scalaniem `MatchDetails` (dla piłki nożnej i koszykówki) oraz ochroną zakończonych meczów (`FINISHED`) przed cofnięciem statusu.
 * **Piłka nożna (`src/ingest/football/`):** historia i statystyki meczowe (`xG`, strzały, strzały celne, rożne, faule, kartki, wynik HT) z **`football-data.co.uk`** (CSV + `fixtures.csv`), przedmeczowe ratingi Elo (`D - 1`) i prawdopodobieństwa `/Fixtures` z **`clubelo.com`** oraz opcjonalne uzupełnienie bieżącego sezonu z **Football-Data.org v4** (dokładne `utcDate`, kolejki, statusy `LIVE`/`POSTPONED`/`CANCELLED`) dla lig Top 5 (`PL, PD, BL1, SA, FL1`).
-* **Koszykówka (`src/ingest/basketball.rs`):** **BALLDONTLIE API (`v1/games`)** z paginacją kursorową i limitem 12 s między stronami (dla darmowego limitu 5 req/min) + opcjonalna **Euroliga** z **TheSportsDB**.
+* **Koszykówka (`src/ingest/basketball.rs`):** historia i 30 metryk `Base` + `Advanced` z **`stats.nba.com/stats/teamgamelogs`** (z konfigurowalnym proxy `NBA_API_PROXY`, limitem czasu `NBA_STATS_TIMEOUT_SECS` i pauzą `NBA_STATS_DELAY_MS`), terminarz/kwarty/fallback z **BALLDONTLIE API (`v1/games`)** oraz opcjonalna **Euroliga** z **TheSportsDB**.
 * **Tenis (`src/ingest/tennis.rs`):** archiwalne pliki CSV z mirrora **`Aneeshers/tennis-sackmann-archive`** (ATP/WTA, pomijanie walkowerów `W/O` i `DEF`, rozkładanie rund drabinki na kolejne dni, deterministyczne losowanie strony `home`/`away` na podstawie FNV-1a przeciwko *data leakage*) + bieżące drabinki z **ESPN Scoreboard API** (wyłącznie single, pomijanie zawodników `TBD`).
 
 ### Giełda zakładów, rozliczenia i backtester (`src/domain/`)
@@ -41,12 +41,12 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
 * **Silnik Backtestingu („Wehikuł czasu” — `backtester.rs`):** odtwarza historyczne sezony dzień po dniu (grupowanie po dacie UTC), otwiera w pamięci okno zakładów (`open_backtest_matches`), rozsyła `MATCH_OPPORTUNITY` bez wyniku, zbiera zakłady przez `bet_window_ms` i natychmiast rozlicza dzień. Posiada zabezpieczenie przed równoległym uruchomieniem (`AtomicBool` + RAII guard -> `409 Conflict`) oraz opcję `reset_agents` cofającą poprzednie rozliczone zakłady.
 
 ### Warstwa REST API i WebSocket (`src/api/`, `src/ws/`)
-* Kompletny router REST pod `/api/v1` oraz diagnostyka `/health`.
+* Kompletny router REST pod `/api/v1`, diagnostyka `/health` oraz interaktywna dokumentacja OpenAPI **Swagger UI** pod `/docs` (specyfikacja JSON: `/openapi.json`).
 * Hub WebSocket pod `/ws/agent` oparty o `tokio::sync::broadcast`, uwierzytelnianie przed upgrade'em (`401 Unauthorized` przy złym `agent_id`/`api_key`), obsługę komend `PLACE_BET` i `GET_BANKROLL` oraz mechanizm **Late Joiners** (`src/ws/session.rs` – wysyłanie zaległych okazji meczowych po nawiązaniu połączenia).
 * Jednolita obsługa błędów `AppError` (`src/error.rs`) mapowana na odpowiedzi JSON `{"error": "...", "code": "..."}`.
 
 ### Testy i CI/CD
-* Zestaw testów w `tests/`: `backtester.rs`, `betting_exchange.rs`, `predictions.rs`, `settlement.rs`, `ingest_football.rs`, `ingest_basketball.rs`, `ingest_tennis.rs`.
+* Zestaw testów w `tests/`: `backtester.rs`, `betting_exchange.rs`, `docs.rs`, `predictions.rs`, `settlement.rs`, `ingest_football.rs`, `ingest_basketball.rs`, `ingest_tennis.rs` (z próbkami w `tests/fixtures/`).
 * Workflow GitHub Actions (`.github/workflows/backend-docker.yml`): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked` oraz budowanie obrazów Multi-Arch (`linux/amd64`, `linux/arm64`) do `ghcr.io`.
 
 ---
@@ -58,16 +58,17 @@ backend/
 ├── Cargo.toml                  # Zależności (axum 0.8, sqlx 0.9, tokio, rust_decimal, reqwest)
 ├── Cargo.lock                  # Zamrożone wersje zależności
 ├── Dockerfile                  # Wieloetapowy obraz produkcyjny (rust:1-slim-bookworm -> debian:bookworm-slim)
-├── plan.md                     # Archiwalna dokumentacja faz realizacji projektu
-├── README.md                   # Ten dokument
+├── README_backend.md           # Ten dokument
 ├── migrations/                 # Migracje SQLx wykonywane automatycznie przy starcie
 │   ├── 202611010001_init_sports_core.sql
 │   ├── 202611010002_init_predictions.sql
 │   ├── 202611010003_init_agents_bets.sql
 │   └── 202611010004_seed_dev_data.sql
 ├── tests/                      # Testy jednostkowe i domenowe (cargo test)
+│   ├── fixtures/               # Zanonimizowane próbki CSV/JSON/HTML do testów parserów
 │   ├── backtester.rs
 │   ├── betting_exchange.rs
+│   ├── docs.rs
 │   ├── ingest_basketball.rs
 │   ├── ingest_football.rs
 │   ├── ingest_tennis.rs
@@ -81,12 +82,13 @@ backend/
     ├── error.rs                # Globalny enum AppError -> odpowiedzi HTTP JSON
     ├── models/
     │   ├── mod.rs
-    │   ├── match_model.rs      # Match, MatchOdds, MatchWithDetailsDto, enum MatchDetails
+    │   ├── match_model.rs      # Match, MatchOdds, MatchWithDetailsDto, MatchDetails + statystyki
     │   ├── participant.rs      # Competition, Participant
     │   ├── prediction.rs       # PredictionModel, Prediction, CreatePredictionDto
     │   └── bet.rs              # Agent, Bet
     ├── api/
     │   ├── mod.rs              # Główny router /api/v1
+    │   ├── docs.rs             # Swagger UI (/docs) i OpenAPI 3.0.3 (/openapi.json)
     │   ├── matches.rs          # GET /matches, GET /matches/{id}
     │   ├── agents.rs           # GET/POST /agents, /leaderboard, /{id}/bets
     │   ├── predictions.rs      # POST /predictions + walidacja + broadcast WS
@@ -103,13 +105,13 @@ backend/
     │   ├── settlement.rs       # Rozliczanie meczów i publikacja MATCH_SETTLED
     │   └── backtester.rs       # Symulator historyczny dzień po dniu
     └── ingest/
-        ├── mod.rs              # Harmonogram, retry 429, transakcyjny store_matches
+        ├── mod.rs              # Harmonogram, retry 429/5xx, transakcyjny store_matches
         ├── football/           # football-data.co.uk + Football-Data.org + clubelo.com (Top 5 lig)
         │   ├── mod.rs          # Orkiestracja sync() i Football-Data.org v4
         │   ├── teams.rs        # Normalizacja nazw drużyn, slugi ClubElo, mapa lig
         │   ├── football_data_uk.rs # Klient i parser CSV football-data.co.uk + fixtures.csv
         │   └── clubelo.rs      # Parser clubelo.com (D - 1 z wykresu i /Fixtures)
-        ├── basketball.rs       # BALLDONTLIE + TheSportsDB
+        ├── basketball.rs       # stats.nba.com + BALLDONTLIE + TheSportsDB
         └── tennis.rs           # Mirror Sackmanna + ESPN Scoreboard
 ```
 
@@ -122,7 +124,9 @@ backend/
 | Metoda | Ścieżka | Status sukcesu | Opis |
 | :--- | :--- | :--- | :--- |
 | `GET` | `/health` | `200 OK` | Stan serwera, połączenia z bazą i liczba subskrybentów WS |
-| `GET` | `/api/v1/matches` | `200 OK` | Lista meczów z opcjonalnym filtrowaniem (`sport`, `status`, `season`) |
+| `GET` | `/docs` | `200 OK` | Interaktywna dokumentacja OpenAPI (Swagger UI) |
+| `GET` | `/openapi.json` | `200 OK` | Specyfikacja OpenAPI 3.0.3 wszystkich endpointów REST |
+| `GET` | `/api/v1/matches` | `200 OK` | Lista meczów z filtrowaniem (`sport`, `status`, `season`, `date_from`, `date_to`, `limit`, `offset`) |
 | `GET` | `/api/v1/matches/{id}` | `200 OK` | Szczegóły pojedynczego meczu z kursami `MARKET_AVG` i `match_details` |
 | `GET` | `/api/v1/agents` | `200 OK` | Lista zarejestrowanych agentów (bez `api_key`) |
 | `POST` | `/api/v1/agents` | `201 Created` | Rejestracja nowego agenta |
@@ -147,12 +151,21 @@ Sprawdza połączenie z PostgreSQL (`SELECT 1`) i zwraca liczbę aktywnych odbio
 }
 ```
 
+#### `GET /docs` oraz `GET /openapi.json`
+Interaktywna dokumentacja Swagger UI (`/docs`) ładująca specyfikację OpenAPI 3.0.3 z `/openapi.json`.
+
 #### `GET /api/v1/matches`
-Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_date` wraz z nazwami uczestników i kursami `MARKET_AVG`.
+Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_date` i `id` wraz z nazwami uczestników, kursami `MARKET_AVG` oraz `match_details`.
 * **Opcjonalne parametry query:**
   * `sport` — np. `FOOTBALL`, `BASKETBALL`, `TENNIS` (wielkość liter bez znaczenia)
   * `status` — np. `SCHEDULED`, `LIVE`, `FINISHED`, `POSTPONED`, `CANCELLED`
-  * `season` — np. `2024-2025`, `2026`
+  * `season` — np. `2025-2026`, `2026`
+  * `date_from`, `date_to` — granice daty meczu w formacie RFC 3339 / UTC (np. `2026-08-01T00:00:00Z`)
+  * `limit`, `offset` — paginacja (`limit` ograniczany do `1..=5000`, domyślnie bez limitu; `offset >= 0`)
+* **Zawartość `match_details` (JSONB):**
+  * `football`: `ht_home`, `ht_away`, `round`, opcjonalne `home_stats` / `away_stats` (`xg`, `shots`, `shots_on_target`, `corners`, `fouls`, `yellow_cards`, `red_cards`) oraz `pre_match_elo` (`home_elo`, `away_elo`, `elo_diff`, `home_rank`, `away_rank`, `clubelo_prob_home/draw/away`).
+  * `basketball`: `quarters`, `overtime`, `season_type` oraz opcjonalne `home_stats` / `away_stats` (30 metryk `Base` + `Advanced` ze `stats.nba.com`).
+  * `tennis`: `surface`, `best_of`, `sets`, `home_aces`, `away_aces`.
 
 #### `GET /api/v1/matches/{id}`
 Zwraca szczegóły pojedynczego meczu (`MatchWithDetailsDto`) lub `404 Not Found`, jeśli mecz nie istnieje.
@@ -330,13 +343,13 @@ docker compose up -d
 ## 7. Dalszy plan rozwoju (Roadmap & TODO)
 
 ### 1. Niezawodność i deduplikacja w warstwie Ingest / ETL
-* [ ] **Zaawansowana deduplikacja meczów w `store_matches` (`src/ingest/mod.rs`):** Przed `INSERT INTO matches` wyszukiwać istniejący rekord po identyfikatorach w `external_ids` lub po parze `(competition_id, season, home_participant_id, away_participant_id)` w tym samym dniu kalendarzowym (`(match_date AT TIME ZONE 'UTC')::date`). Pozwoli to wykonywać `UPDATE` (wraz z aktualizacją godziny `match_date`) przy zmianach terminarza lub rozbieżnościach godzinowych między źródłami.
-* [ ] **Poprawa parsowania zmiennych listowych w `src/config.rs`:** Odfiltrowanie pustych stringów w `env_list` (aby brak lub pusta wartość zmiennej nie tworzyły jednoelementowego `vec![""]`) oraz traktowanie pustych kluczy API jako `None`.
-* [ ] **Separacja sezonów archiwalnych od bieżących:** Ograniczenie domyślnych źródeł historycznych wyłącznie do zamkniętych sezonów, aby nie nakładały się na dane live.
+* [x] **Zaawansowana deduplikacja meczów w `store_matches` (`src/ingest/mod.rs`):** Przed `INSERT INTO matches` wyszukiwanie po identyfikatorach w `external_ids @>` oraz po parze drużyn w oknie czasowym ±36h, z symetrycznym scalaniem `MatchDetails` i ochroną `FINISHED`.
+* [x] **Poprawa parsowania zmiennych listowych w `src/config.rs`:** Odfiltrowanie pustych stringów w `env_list` oraz traktowanie pustych kluczy API w `env_non_empty` jako `None`.
+* [x] **Separacja sezonów archiwalnych od bieżących:** Ograniczenie domyślnych źródeł historycznych wyłącznie do zamkniętych sezonów, aby nie nakładały się na dane live.
 
 ### 2. Rozszerzenie danych i dyscyplin sportowych
 * [ ] **Obsługa pełnych 5 dyscyplin sportowych:** Dodanie kolejnych 2 dyscyplin do migracji (`CHECK` w `competitions` / `participants` / `prediction_models`), wariantów `MatchDetails` oraz nowych workerów w `src/ingest/`.
-* [ ] **Wzbogacenie statystyk koszykówki (`src/ingest/basketball.rs`):** Odczytywanie punktów w kwartach (`quarters`) z odpowiedzi `balldontlie.io` oraz opcjonalna integracja historycznych statystyk meczowych (`leaguegamelog` z `stats.nba.com` / `nba_api`).
+* [x] **Wzbogacenie statystyk koszykówki (`src/ingest/basketball.rs`):** Odczytywanie punktów w kwartach (`quarters`) z `balldontlie.io` oraz integracja statystyk `Base` + `Advanced` z `stats.nba.com/stats/teamgamelogs` (z opcją `NBA_API_PROXY`).
 * [ ] **Integracja web scrapera kursów i automatyczne wyliczanie kursów:** Zasilanie tabeli `match_odds` danymi ze scrapera oraz wyliczanie kursów bazowych na podstawie predykcji modeli ML (marża + kryterium Kelly'ego).
 
 ### 3. Rozwój giełdy, typerów i backtestera

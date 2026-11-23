@@ -74,7 +74,7 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 | Dyscyplina | Status w backendzie | Dane historyczne | Dane bieżące |
 | :--- | :--- | :--- | :--- |
 | **Piłka nożna** | Zaimplementowane | `football-data.co.uk` (`xG`/strzały/rożne/HT) + `clubelo.com` (`D - 1`) | `football-data.co.uk` / Football-Data.org (`v4`) + `clubelo.com` |
-| **Koszykówka** | Zaimplementowane | BALLDONTLIE (`v1/games`) / TheSportsDB | BALLDONTLIE (`v1/games`) / TheSportsDB |
+| **Koszykówka** | Zaimplementowane | `stats.nba.com` (`Base` + `Advanced`) / BALLDONTLIE / TheSportsDB | `stats.nba.com` / BALLDONTLIE (`v1/games`) / TheSportsDB |
 | **Tenis ziemny** | Zaimplementowane | Archiwum Sackmanna (`Aneeshers/tennis-sackmann-archive`) | Publiczne API ESPN |
 | **Sport 4** | Planowane | — | — |
 | **Sport 5** | Planowane | — | — |
@@ -94,14 +94,15 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 
 ```text
 .
+├── .env.example             # Szablon zmiennych środowiskowych (skopiuj do .env)
 ├── .github/workflows/
 │   └── backend-docker.yml   # Pipeline CI/CD (formatowanie, clippy, testy, obrazy amd64/arm64)
 ├── backend/                 # Centralny serwer giełdy zakładów, ETL i komunikacji WS (Rust/Axum)
 │   ├── migrations/          # Schemat bazy PostgreSQL i dane startowe (seed)
 │   ├── src/                 # Kod źródłowy backendu (api, domain, ingest, models, ws)
-│   ├── tests/               # Testy jednostkowe i domenowe
+│   ├── tests/               # Testy jednostkowe i domenowe (+ fixtures/)
 │   ├── Dockerfile           # Wieloetapowy obraz produkcyjny
-│   └── README.md            # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
+│   └── README_backend.md    # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
 └── docker-compose.yml       # Orkiestracja bazy PostgreSQL 16 i serwisu backend
 ```
 
@@ -112,20 +113,14 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 ### Wymagania
 * Docker + Docker Compose
 
-### 1. (Opcjonalnie) Konfiguracja kluczy API w `.env`
-Utwórz plik `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`), aby odblokować pobieranie bieżących meczów z zewnętrznych API:
+### 1. (Opcjonalnie) Konfiguracja zmiennych w `.env`
+Skopiuj szablon `.env.example` do `.env` w głównym katalogu repozytorium (obok `docker-compose.yml`), aby dostosować zakres importowanych sezonów lub dodać klucze API:
 
-```env
-FOOTBALL_DATA_API_KEY=twoj_klucz_football_data
-BALLDONTLIE_API_KEY=twoj_klucz_balldontlie
-INGEST_FOOTBALL_SEASONS=2023-24,2024-25
-INGEST_FOOTBALL_LEAGUES=PL
-INGEST_NBA_SEASONS=2023,2024
-INGEST_TENNIS_YEARS=2023,2024
-INGEST_TENNIS_TOURS=ATP
+```bash
+cp .env.example .env
 ```
 
-*(Plik `.env` jest ignorowany przez Gita w `.gitignore`.)*
+*(Plik `.env` jest ignorowany przez Gita w `.gitignore`; szczegóły wszystkich zmiennych znajdziesz w `.env.example` i w `backend/README_backend.md`.)*
 
 ### 2. Uruchomienie usług
 ```bash
@@ -134,6 +129,7 @@ docker compose up -d
 
 Po starcie:
 * Backend API dostępny jest pod adresem `http://localhost:3000` (diagnostyka: `GET http://localhost:3000/health`).
+* Interaktywna dokumentacja **Swagger UI** dostępna jest pod adresem `http://localhost:3000/docs` (surowy JSON: `GET /openapi.json`).
 * WebSocket dla agentów AI nasłuchuje pod adresem `ws://localhost:3000/ws/agent`.
 * PostgreSQL uruchamia migracje automatycznie i ładuje przykładowe dane startowe (3 dyscypliny, 6 meczów, przykładowe modele i 2 agentów testowych).
 

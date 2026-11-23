@@ -29,12 +29,6 @@ const BALLDONTLIE_REQUEST_DELAY: Duration = Duration::from_secs(12);
 /// Liczba kwart w regulaminowym czasie gry; `period` powyżej tej wartości oznacza dogrywkę.
 const REGULATION_PERIODS: i32 = 4;
 
-/// Limit czasu dla pojedynczego zapytania do `stats.nba.com` (globalny klient zostaje na 15 s).
-const NBA_STATS_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// Krótka pauza między zapytaniami `Base` i `Advanced`, żeby nie przeciążać `stats.nba.com`.
-const NBA_STATS_REQUEST_DELAY: Duration = Duration::from_millis(700);
-
 /// Kolejne czasy oczekiwania przed ponowieniem nieudanego zapytania do `stats.nba.com`.
 const NBA_STATS_RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(3),
@@ -404,30 +398,32 @@ pub fn parse_nba_team_gamelogs(
 /// Pobiera sezon NBA z `stats.nba.com` (`Regular Season` oraz `Playoffs` dla `Base` i `Advanced`).
 async fn sync_nba_stats_season(state: &AppState, season_start: i32) -> AppResult<usize> {
     let season_short = short_season_label(season_start);
+    let timeout = Duration::from_secs(state.config.nba_stats_timeout_secs.max(10));
+    let delay = Duration::from_millis(state.config.nba_stats_delay_ms);
     let mut total = 0;
 
     for season_type in NBA_SEASON_TYPES {
         let base_url = nba_team_gamelogs_url(&season_short, season_type, "Base");
         let base_json = fetch_text_with_timeout(
-            &state.http_client,
+            &state.nba_stats_client,
             &base_url,
             &NBA_STATS_HEADERS,
-            NBA_STATS_TIMEOUT,
+            timeout,
             &NBA_STATS_RETRY_DELAYS,
         )
         .await?;
-        tokio::time::sleep(NBA_STATS_REQUEST_DELAY).await;
+        tokio::time::sleep(delay).await;
 
         let adv_url = nba_team_gamelogs_url(&season_short, season_type, "Advanced");
         let adv_json = fetch_text_with_timeout(
-            &state.http_client,
+            &state.nba_stats_client,
             &adv_url,
             &NBA_STATS_HEADERS,
-            NBA_STATS_TIMEOUT,
+            timeout,
             &NBA_STATS_RETRY_DELAYS,
         )
         .await?;
-        tokio::time::sleep(NBA_STATS_REQUEST_DELAY).await;
+        tokio::time::sleep(delay).await;
 
         let matches = parse_nba_team_gamelogs(&base_json, &adv_json, season_type)?;
         if matches.is_empty() {

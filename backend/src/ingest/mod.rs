@@ -21,7 +21,7 @@ use sqlx::{types::Json, PgConnection, PgPool};
 
 use crate::{
     error::{AppError, AppResult},
-    models::match_model::MatchDetails,
+    models::match_model::{FootballPreMatchElo, FootballTeamStats, MatchDetails},
     state::AppState,
 };
 
@@ -96,7 +96,7 @@ pub fn season_start_year(now: DateTime<Utc>) -> i32 {
     }
 }
 
-/// Skrócona etykieta sezonu używana przez OpenFootball, np. `2024-25`.
+/// Skrócona etykieta sezonu, np. `2024-25` (używana m.in. przez `stats.nba.com`).
 pub fn short_season_label(start_year: i32) -> String {
     format!("{}-{:02}", start_year, (start_year + 1) % 100)
 }
@@ -244,10 +244,90 @@ pub fn choose_match_date(existing: DateTime<Utc>, incoming: DateTime<Utc>) -> Da
     }
 }
 
-/// Scala szczegóły meczu, łącząc kwarty z BALLDONTLIE oraz statystyki ze `stats.nba.com`
-/// niezależnie od kolejności uruchomienia źródeł.
+/// Scala opcjonalne statystyki drużyny piłkarskiej na poziomie poszczególnych pól.
+fn merge_football_team_stats(
+    existing: Option<Box<FootballTeamStats>>,
+    incoming: Option<Box<FootballTeamStats>>,
+) -> Option<Box<FootballTeamStats>> {
+    match (existing, incoming) {
+        (None, None) => None,
+        (Some(old), None) => Some(old),
+        (None, Some(new)) => Some(new),
+        (Some(old), Some(new)) => Some(Box::new(FootballTeamStats {
+            xg: new.xg.or(old.xg),
+            shots: new.shots.or(old.shots),
+            shots_on_target: new.shots_on_target.or(old.shots_on_target),
+            corners: new.corners.or(old.corners),
+            fouls: new.fouls.or(old.fouls),
+            yellow_cards: new.yellow_cards.or(old.yellow_cards),
+            red_cards: new.red_cards.or(old.red_cards),
+        })),
+    }
+}
+
+/// Scala przedmeczowe ratingi ClubElo na poziomie poszczególnych pól.
+fn merge_football_pre_match_elo(
+    existing: Option<Box<FootballPreMatchElo>>,
+    incoming: Option<Box<FootballPreMatchElo>>,
+) -> Option<Box<FootballPreMatchElo>> {
+    match (existing, incoming) {
+        (None, None) => None,
+        (Some(old), None) => Some(old),
+        (None, Some(new)) => Some(new),
+        (Some(old), Some(new)) => {
+            let home_elo = new.home_elo.or(old.home_elo);
+            let away_elo = new.away_elo.or(old.away_elo);
+            let elo_diff = new
+                .elo_diff
+                .or(old.elo_diff)
+                .or_else(|| home_elo.zip(away_elo).map(|(h, a)| h - a));
+            Some(Box::new(FootballPreMatchElo {
+                home_elo,
+                away_elo,
+                elo_diff,
+                home_rank: new.home_rank.or(old.home_rank),
+                away_rank: new.away_rank.or(old.away_rank),
+                clubelo_prob_home: new.clubelo_prob_home.or(old.clubelo_prob_home),
+                clubelo_prob_draw: new.clubelo_prob_draw.or(old.clubelo_prob_draw),
+                clubelo_prob_away: new.clubelo_prob_away.or(old.clubelo_prob_away),
+            }))
+        }
+    }
+}
+
+/// Scala szczegóły meczu z wielu źródeł (np. BALLDONTLIE + `stats.nba.com` albo
+/// Football-Data.org + `football-data.co.uk` + ClubElo) niezależnie od kolejności ich uruchomienia.
 pub fn merge_match_details(existing: MatchDetails, incoming: MatchDetails) -> MatchDetails {
     match (existing, incoming) {
+        (
+            MatchDetails::Football {
+                ht_home: old_ht_home,
+                ht_away: old_ht_away,
+                round: old_round,
+                home_stats: old_home_stats,
+                away_stats: old_away_stats,
+                pre_match_elo: old_pre_match_elo,
+            },
+            MatchDetails::Football {
+                ht_home: new_ht_home,
+                ht_away: new_ht_away,
+                round: new_round,
+                home_stats: new_home_stats,
+                away_stats: new_away_stats,
+                pre_match_elo: new_pre_match_elo,
+            },
+        ) => MatchDetails::Football {
+            ht_home: new_ht_home.or(old_ht_home),
+            ht_away: new_ht_away.or(old_ht_away),
+            round: if new_round.is_empty() {
+                old_round
+            } else {
+                new_round
+            },
+            home_stats: merge_football_team_stats(old_home_stats, new_home_stats),
+            away_stats: merge_football_team_stats(old_away_stats, new_away_stats),
+            pre_match_elo: merge_football_pre_match_elo(old_pre_match_elo, new_pre_match_elo),
+        },
         (
             MatchDetails::Basketball {
                 quarters: old_quarters,
@@ -430,9 +510,20 @@ pub fn merge_existing_match(
         )
     };
 
-    let match_date = choose_match_date(existing.match_date, incoming.match_date);
+    // Football-Data.org ma oficjalną godzinę `utcDate`; źródło CSV nie powinno jej nadpisywać.
+    let match_date = if incoming.sport == "FOOTBALL"
+        && existing.external_ids.0.get("football_data").is_some()
+        && incoming.external_ids.get("football_data").is_none()
+        && existing.match_date.time() != NaiveTime::MIN
+    {
+        existing.match_date
+    } else {
+        choose_match_date(existing.match_date, incoming.match_date)
+    };
 
-    // Zakończony mecz nie cofa się do starszego statusu, ale może przyjąć dokładniejszą godzinę.
+    // Zakończony mecz nie cofa się do starszego statusu ani wyniku, ale może przyjąć dokładniejszą
+    // godzinę i brakujące szczegóły wzbogacające (np. HT, kolejkę lub rating Elo).
+    let details = merge_match_details(existing.match_details.0.clone(), inc_details);
     if existing.status == "FINISHED" && incoming.status != "FINISHED" {
         return MergedMatchUpdate {
             match_date,
@@ -440,7 +531,7 @@ pub fn merge_existing_match(
             home_score: existing.home_score,
             away_score: existing.away_score,
             winner: existing.winner.clone(),
-            details: existing.match_details.0.clone(),
+            details,
         };
     }
 
@@ -450,7 +541,7 @@ pub fn merge_existing_match(
         home_score: inc_home_score.or(existing.home_score),
         away_score: inc_away_score.or(existing.away_score),
         winner: inc_winner.or_else(|| existing.winner.clone()),
-        details: merge_match_details(existing.match_details.0.clone(), inc_details),
+        details,
     }
 }
 

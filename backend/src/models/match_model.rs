@@ -45,16 +45,59 @@ pub struct BasketballTeamStats {
     pub pie: Option<f64>,
 }
 
+/// Statystyki drużyny z jednego meczu piłkarskiego (`football-data.co.uk`, post-match).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FootballTeamStats {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shots: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shots_on_target: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corners: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fouls: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yellow_cards: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub red_cards: Option<i32>,
+}
+
+/// Przedmeczowy ranking siły drużyn na dzień przed meczem (ClubElo, pre-match).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct FootballPreMatchElo {
+    pub home_elo: Option<f64>,
+    pub away_elo: Option<f64>,
+    pub elo_diff: Option<f64>,
+    pub home_rank: Option<i32>,
+    pub away_rank: Option<i32>,
+    /// Opcjonalne prawdopodobieństwa wyliczone z endpointu `/Fixtures` dla meczów `SCHEDULED`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clubelo_prob_home: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clubelo_prob_draw: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clubelo_prob_away: Option<f64>,
+}
+
 /// Szczegóły specyficzne dla dyscypliny, przechowywane w kolumnie JSONB `match_details`.
 /// Wariant rozpoznawany jest po polu `sport_type` (np. `"football"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "sport_type", rename_all = "snake_case")]
 pub enum MatchDetails {
-    /// Piłka nożna: wynik do przerwy i kolejka.
+    /// Piłka nożna: wynik do przerwy, kolejka oraz opcjonalne statystyki meczowe i Elo przedmeczowe.
     Football {
         ht_home: Option<i32>,
         ht_away: Option<i32>,
         round: String,
+        /// Box ogranicza rozmiar wariantu enuma `MatchDetails` dla pozostałych dyscyplin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        home_stats: Option<Box<FootballTeamStats>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        away_stats: Option<Box<FootballTeamStats>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pre_match_elo: Option<Box<FootballPreMatchElo>>,
     },
     /// Koszykówka: punkty w kwartach (gospodarz, gość), dogrywka oraz opcjonalne statystyki NBA.
     Basketball {

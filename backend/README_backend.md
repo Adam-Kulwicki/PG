@@ -82,6 +82,7 @@ backend/
 │   │   └── nba_base_sample.json
 │   ├── backtester.rs
 │   ├── betting_exchange.rs
+│   ├── docs.rs
 │   ├── ingest_basketball.rs
 │   ├── ingest_football.rs
 │   ├── ingest_tennis.rs
@@ -158,6 +159,9 @@ Sprawdza połączenie z PostgreSQL (`SELECT 1`) i zwraca liczbę aktywnych odbio
   "connected_ws_agents": 2
 }
 ```
+
+#### `GET /docs` oraz `GET /api-docs/openapi.json`
+Interaktywna dokumentacja Swagger UI (`/docs`) ładująca specyfikację OpenAPI 3 z `/api-docs/openapi.json`.
 
 #### `GET /api/v1/matches`
 Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_date`, a następnie `id` (`ORDER BY m.match_date ASC, m.id ASC`), wraz z nazwami uczestników i kursami `MARKET_AVG`.

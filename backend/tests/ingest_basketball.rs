@@ -11,6 +11,7 @@ use backend::{
         ExistingMatchRow, IngestedMatch, IngestedParticipant,
     },
     models::match_model::{BasketballTeamStats, MatchDetails},
+    state::build_nba_stats_client,
 };
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
@@ -678,4 +679,13 @@ fn parses_nba_ingest_source_and_pagination() {
         normalize_pagination(Some(10_000), Some(250)),
         (Some(MAX_MATCHES_LIMIT), 250)
     );
+}
+
+/// Konfiguracja opcjonalnego proxy `NBA_API_PROXY` nie panikuje przy błędnym adresie.
+#[test]
+fn builds_nba_stats_client_with_optional_proxy() {
+    let fallback = reqwest::Client::new();
+    let _direct = build_nba_stats_client(None, &fallback);
+    let _proxied = build_nba_stats_client(Some("http://127.0.0.1:8080"), &fallback);
+    let _invalid_fallback = build_nba_stats_client(Some("://bad proxy url"), &fallback);
 }

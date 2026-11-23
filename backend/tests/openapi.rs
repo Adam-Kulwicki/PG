@@ -52,6 +52,8 @@ fn openapi_spec_contains_all_endpoints_and_hides_agent_api_key() {
         "HealthResponse",
         "MatchWithDetailsDto",
         "MatchDetails",
+        "FootballTeamStats",
+        "FootballPreMatchElo",
         "BasketballTeamStats",
         "Agent",
         "CreateAgentDto",

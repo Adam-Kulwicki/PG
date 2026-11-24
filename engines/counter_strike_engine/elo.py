@@ -1,11 +1,21 @@
 """Podstawowe obliczenia Elo dla meczów Counter-Strike."""
 
 
+# Nowa drużyna zaczyna od 1500 punktów.
+INITIAL_RATING = 1500.0
+
 # Przewaga 400 punktów Elo daje prawdopodobieństwo wygranej równe 10/11.
 ELO_SCALE = 400.0
 
 # Współczynnik K określa, jak mocno pojedynczy wynik wpływa na rating.
 K_FACTOR = 32.0
+
+
+def decay_rating(rating: float, idle_days: float, half_life_days: float) -> float:
+    """Przybliża rating do 1500 po nieujemnym czasie i przy dodatnim okresie półtrwania."""
+    # Po jednym okresie półtrwania zostaje połowa odchylenia od 1500.
+    retained_fraction = 0.5 ** (idle_days / half_life_days)
+    return INITIAL_RATING + (rating - INITIAL_RATING) * retained_fraction
 
 
 def win_probability(team_rating: float, opponent_rating: float) -> float:

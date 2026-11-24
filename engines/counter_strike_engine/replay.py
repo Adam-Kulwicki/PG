@@ -3,14 +3,14 @@
 
 import argparse
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
+from math import isfinite
 from pathlib import Path
+from typing import Optional
 
-from .elo import update_ratings, win_probability
+from .elo import INITIAL_RATING, decay_rating, update_ratings, win_probability
 
 
-# Każda drużyna dostaje ten rating przed pierwszym znanym wynikiem.
-INITIAL_RATING = 1500.0
 MATCH_COLUMNS = {
     "match_id", "starts_at", "result_available_at",
     "team_a_id", "team_b_id", "winner_team_id",
@@ -56,17 +56,35 @@ def read_events(path: Path) -> list[tuple[datetime, bool, dict[str, str]]]:
     return sorted(events, key=lambda event: (event[0], event[1], event[2]["match_id"]))
 
 
-def replay(path: Path) -> None:
+def _rating_at(
+    saved_rating: tuple[float, datetime], at: datetime, half_life_days: Optional[float]
+) -> float:
+    """Oblicza rating na podaną chwilę na podstawie ostatniej zapisanej aktualizacji."""
+    rating, last_result_at = saved_rating
+    if half_life_days is None:
+        return rating
+    idle_days = (at - last_result_at) / timedelta(days=1)
+    return decay_rating(rating, idle_days, half_life_days)
+
+
+def replay(path: Path, half_life_days: Optional[float] = None) -> None:
     """Pokazuje prognozy przedmeczowe, rzeczywiste wyniki i końcowe ratingi."""
-    ratings: dict[str, float] = {}
-    for _, result_available, match in read_events(path):
+    if half_life_days is not None and (not isfinite(half_life_days) or half_life_days <= 0):
+        raise ValueError("Okres półtrwania musi być dodatnią, skończoną liczbą dni")
+
+    ratings: dict[str, tuple[float, datetime]] = {}
+    events = read_events(path)
+    for at, result_available, match in events:
         team_a, team_b = match["team_a_id"], match["team_b_id"]
-        rating_a = ratings.get(team_a, INITIAL_RATING)
-        rating_b = ratings.get(team_b, INITIAL_RATING)
+        rating_a = _rating_at(ratings.get(team_a, (INITIAL_RATING, at)), at, half_life_days)
+        rating_b = _rating_at(ratings.get(team_b, (INITIAL_RATING, at)), at, half_life_days)
         winner = match["winner_team_id"]
 
         if result_available:
-            ratings[team_a], ratings[team_b] = update_ratings(rating_a, rating_b, winner == team_a)
+            # Dopiero dostępny wynik zapisuje nowe ratingi i rozpoczyna kolejny okres przerwy.
+            updated_a, updated_b = update_ratings(rating_a, rating_b, winner == team_a)
+            ratings[team_a] = (updated_a, at)
+            ratings[team_b] = (updated_b, at)
         else:
             probability_a = win_probability(rating_a, rating_b)
             print(
@@ -75,16 +93,28 @@ def replay(path: Path) -> None:
             )
 
     print("\nKońcowe ratingi Elo")
-    for team, rating in sorted(ratings.items(), key=lambda entry: (-entry[1], entry[0])):
+    if not events:
+        return
+    # Porównujemy wszystkie drużyny na tę samą chwilę w symulacji.
+    last_event_at = events[-1][0]
+    final_ratings = {
+        team: _rating_at(saved, last_event_at, half_life_days) for team, saved in ratings.items()
+    }
+    for team, rating in sorted(final_ratings.items(), key=lambda entry: (-entry[1], entry[0])):
         print(f"{team}  {rating:.1f}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Odtwórz prognozy Elo z historii meczów")
     parser.add_argument("history_csv", type=Path, help="Ścieżka do lokalnego CSV z meczami")
+    parser.add_argument(
+        "--half-life-days",
+        type=float,
+        help="Liczba dni, po których odchylenie Elo od 1500 maleje o połowę",
+    )
     args = parser.parse_args()
     try:
-        replay(args.history_csv)
+        replay(args.history_csv, args.half_life_days)
     except (OSError, ValueError, csv.Error) as error:
         parser.error(str(error))
 

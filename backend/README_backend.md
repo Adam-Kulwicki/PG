@@ -115,6 +115,7 @@ backend/
     ├── domain/
     │   ├── mod.rs
     │   ├── betting_exchange.rs # Logika zawierania zakładów (ACID) i obliczania EV
+    │   ├── odds.rs             # Wyliczanie kursów MARKET_AVG z prawdopodobieństw i marży
     │   ├── settlement.rs       # Rozliczanie meczów i publikacja MATCH_SETTLED
     │   └── backtester.rs       # Symulator historyczny dzień po dniu
     └── ingest/
@@ -202,7 +203,7 @@ Zwraca ranking agentów posortowany malejąco po `current_bankroll`:
 Zwraca pełną listę zakładów (`Bet`) postawionych przez agenta o podanym `id`, posortowaną malejąco po `placed_at`.
 
 #### `POST /api/v1/predictions`
-Przyjmuje predykcję z silnika ML (automatycznie rejestruje model po parze `(model_name, model_version)` i wykonuje upsert po `(match_id, model_id)`). Jeśli mecz ma status `SCHEDULED`, wysyła zdarzenie `MATCH_OPPORTUNITY` do wszystkich agentów podpiętych przez WebSocket.
+Przyjmuje predykcję z silnika ML (automatycznie rejestruje model po parze `(model_name, model_version)` i wykonuje upsert po `(match_id, model_id)`), a następnie automatycznie wylicza i zapisuje (upsert) kursy `MARKET_AVG` w `match_odds` z użyciem `BOOKMAKER_MARGIN` (zarówno dla meczów `SCHEDULED`, jak i `FINISHED` pod backtester). Jeśli mecz ma status `SCHEDULED`, wysyła zdarzenie `MATCH_OPPORTUNITY` do wszystkich agentów podpiętych przez WebSocket.
 * **Walidacja:** każde prawdopodobieństwo w `[0, 1]`, suma `prob_home + prob_draw + prob_away` w przedziale `1.0 ± 0.01`, `model_name` niepusty.
 * **Request body:**
   ```json
@@ -315,6 +316,7 @@ Wszystkie ustawienia aplikacji wczytywane są w `src/config.rs` (oraz w `src/mai
 | `FOOTBALL_DATA_API_KEY` | Nie | `None` | Klucz do Football-Data.org (bieżący sezon piłki nożnej; pusta wartość z `.env` traktowana jako `None`) |
 | `BALLDONTLIE_API_KEY` | Nie | `None` | Klucz do BALLDONTLIE (terminarz, kwarty, dokładny `datetime` UTC NBA oraz fallback historii; pusta wartość z `.env` traktowana jako `None`) |
 | `THESPORTSDB_EUROLEAGUE_ID` | Nie | `None` | ID ligi Euroligi w TheSportsDB (bez niego lub przy pustej wartości Euroliga jest pomijana) |
+| `BOOKMAKER_MARGIN` | Nie | `0.05` | Marża bukmacherska stosowana przy wyliczaniu kursów `MARKET_AVG` z prawdopodobieństw modeli (`[0.00, 1.00)`) |
 | `INGEST_ENABLED` | Nie | `true` | Czy uruchamiać automatyczny harmonogram ETL w tle |
 | `INGEST_INTERVAL_MINUTES` | Nie | `60` | Odstęp (w minutach) między cyklami ingestu |
 | `INGEST_NBA_SOURCE` | Nie | `auto` | Strategia wyboru źródła danych NBA: `auto` (`stats.nba.com` + BALLDONTLIE jako terminarz/kwarty/fallback), `nba_stats` (akceptuje też `nba-stats`, `nbastats` — wyłącznie `stats.nba.com`), `balldontlie` (wyłącznie BALLDONTLIE, wymaga klucza API) |

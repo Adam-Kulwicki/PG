@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
 from pathlib import Path
@@ -15,6 +16,18 @@ MATCH_COLUMNS = {
     "match_id", "starts_at", "result_available_at",
     "team_a_id", "team_b_id", "winner_team_id",
 }
+
+
+@dataclass(frozen=True)
+class Prediction:
+    """Prognoza z odtworzenia meczu wraz z wynikiem potrzebnym do jej oceny."""
+
+    match_id: str
+    predicted_at: datetime
+    team_a_id: str
+    team_b_id: str
+    winner_team_id: str
+    probability_a: float
 
 
 def read_events(path: Path) -> list[tuple[datetime, bool, dict[str, str]]]:
@@ -67,13 +80,15 @@ def _rating_at(
     return decay_rating(rating, idle_days, half_life_days)
 
 
-def replay(path: Path, half_life_days: Optional[float] = None) -> None:
-    """Pokazuje prognozy przedmeczowe, rzeczywiste wyniki i końcowe ratingi."""
+def replay_events(
+    events: list[tuple[datetime, bool, dict[str, str]]], half_life_days: Optional[float] = None
+) -> tuple[list[Prediction], dict[str, float]]:
+    """Zwraca prognozy z chronologicznych zdarzeń i ranking na koniec odtworzenia."""
     if half_life_days is not None and (not isfinite(half_life_days) or half_life_days <= 0):
         raise ValueError("Okres półtrwania musi być dodatnią, skończoną liczbą dni")
 
     ratings: dict[str, tuple[float, datetime]] = {}
-    events = read_events(path)
+    predictions: list[Prediction] = []
     for at, result_available, match in events:
         team_a, team_b = match["team_a_id"], match["team_b_id"]
         rating_a = _rating_at(ratings.get(team_a, (INITIAL_RATING, at)), at, half_life_days)
@@ -86,20 +101,38 @@ def replay(path: Path, half_life_days: Optional[float] = None) -> None:
             ratings[team_a] = (updated_a, at)
             ratings[team_b] = (updated_b, at)
         else:
-            probability_a = win_probability(rating_a, rating_b)
-            print(
-                f"{match['match_id']} | {team_a} {probability_a:.1%} | "
-                f"{team_b} {1 - probability_a:.1%} | wygrana {winner}"
+            predictions.append(
+                Prediction(
+                    match_id=match["match_id"],
+                    predicted_at=at,
+                    team_a_id=team_a,
+                    team_b_id=team_b,
+                    winner_team_id=winner,
+                    probability_a=win_probability(rating_a, rating_b),
+                )
             )
 
-    print("\nKońcowe ratingi Elo")
     if not events:
-        return
+        return predictions, {}
     # Porównujemy wszystkie drużyny na tę samą chwilę w symulacji.
     last_event_at = events[-1][0]
     final_ratings = {
         team: _rating_at(saved, last_event_at, half_life_days) for team, saved in ratings.items()
     }
+    return predictions, final_ratings
+
+
+def replay(path: Path, half_life_days: Optional[float] = None) -> None:
+    """Pokazuje prognozy przedmeczowe, rzeczywiste wyniki i końcowe ratingi."""
+    predictions, final_ratings = replay_events(read_events(path), half_life_days)
+    for prediction in predictions:
+        probability_a = prediction.probability_a
+        print(
+            f"{prediction.match_id} | {prediction.team_a_id} {probability_a:.1%} | "
+            f"{prediction.team_b_id} {1 - probability_a:.1%} | wygrana {prediction.winner_team_id}"
+        )
+
+    print("\nKońcowe ratingi Elo")
     for team, rating in sorted(final_ratings.items(), key=lambda entry: (-entry[1], entry[0])):
         print(f"{team}  {rating:.1f}")
 

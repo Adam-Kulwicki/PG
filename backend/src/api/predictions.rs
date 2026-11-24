@@ -3,6 +3,7 @@ use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use rust_decimal::Decimal;
 
 use crate::{
+    domain::odds,
     error::{AppError, AppResult},
     models::{
         match_model::Match,
@@ -45,15 +46,16 @@ pub fn validate_probabilities(home: Decimal, draw: Decimal, away: Decimal) -> Ap
 
 /// POST /api/v1/predictions
 ///
-/// Zapisuje (upsert) predykcję silnika i – dla meczów SCHEDULED – rozgłasza
-/// `MATCH_OPPORTUNITY` do wszystkich podłączonych agentów.
+/// Zapisuje (upsert) predykcję silnika, wylicza i zapisuje kurs `MARKET_AVG` w `match_odds`
+/// (zarówno dla `SCHEDULED`, jak i `FINISHED` pod backtest) oraz – dla meczów `SCHEDULED` –
+/// rozgłasza `MATCH_OPPORTUNITY` do wszystkich podłączonych agentów.
 #[utoipa::path(
     post,
     path = "/api/v1/predictions",
     tag = "Predictions",
     request_body = CreatePredictionDto,
     responses(
-        (status = 201, description = "Predykcja zapisana (upsert) i rozgłoszona przez WebSocket", body = Prediction),
+        (status = 201, description = "Predykcja zapisana (upsert), kurs MARKET_AVG wyliczony i rozgłoszony przez WebSocket", body = Prediction),
         (status = 400, description = "Niepoprawne prawdopodobieństwa lub pusta nazwa modelu", body = crate::error::ErrorResponse),
         (status = 404, description = "Mecz nie istnieje", body = crate::error::ErrorResponse),
         (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
@@ -127,6 +129,32 @@ pub async fn create_prediction(
             .unwrap_or_else(|| serde_json::json!({})),
     ))
     .fetch_one(&mut *tx)
+    .await?;
+
+    // Wyliczamy kurs bukmacherski MARKET_AVG także dla meczów FINISHED (pod backtester).
+    let calculated = odds::calculate_market_odds(
+        payload.prob_home,
+        prob_draw,
+        payload.prob_away,
+        sport == "FOOTBALL",
+        state.config.bookmaker_margin,
+    );
+    sqlx::query(
+        r#"
+        INSERT INTO match_odds (match_id, bookmaker, odds_home, odds_draw, odds_away, updated_at)
+        VALUES ($1, 'MARKET_AVG', $2, $3, $4, NOW())
+        ON CONFLICT (match_id, bookmaker) DO UPDATE SET
+            odds_home = EXCLUDED.odds_home,
+            odds_draw = EXCLUDED.odds_draw,
+            odds_away = EXCLUDED.odds_away,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(payload.match_id)
+    .bind(calculated.odds_home)
+    .bind(calculated.odds_draw)
+    .bind(calculated.odds_away)
+    .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;

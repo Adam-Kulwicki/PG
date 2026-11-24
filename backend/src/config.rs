@@ -3,6 +3,10 @@
 
 use std::env;
 
+use rust_decimal::Decimal;
+
+use crate::domain::odds::default_bookmaker_margin;
+
 /// Źródło danych piłki nożnej wybierane zmienną `INGEST_FOOTBALL_SOURCE`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FootballIngestSource {
@@ -94,6 +98,8 @@ pub struct Config {
     /// Identyfikator ligi Euroligi w TheSportsDB (`THESPORTSDB_EUROLEAGUE_ID`);
     /// bez niego Euroliga jest pomijana.
     pub thesportsdb_euroleague_id: Option<String>,
+    /// Marża bukmacherska stosowana przy wyliczaniu kursów `MARKET_AVG` (`BOOKMAKER_MARGIN`, domyślnie `0.05`).
+    pub bookmaker_margin: Decimal,
 }
 
 /// Wczytuje listę wartości rozdzielonych przecinkami; puste i niepoprawne elementy są pomijane.
@@ -204,6 +210,20 @@ impl Config {
             ingest_tennis_tours.push("ATP".to_string());
         }
 
+        let bookmaker_margin = match env_non_empty("BOOKMAKER_MARGIN") {
+            Some(raw) => match raw.parse::<Decimal>() {
+                Ok(m) if m >= Decimal::ZERO && m < Decimal::ONE => m,
+                _ => {
+                    tracing::warn!(
+                        value = %raw,
+                        "Niepoprawna wartość BOOKMAKER_MARGIN (oczekiwano [0.00, 1.00)) – używam 0.05"
+                    );
+                    default_bookmaker_margin()
+                }
+            },
+            None => default_bookmaker_margin(),
+        };
+
         Self {
             ingest_enabled,
             ingest_interval_minutes,
@@ -219,6 +239,7 @@ impl Config {
             ingest_tennis_years: env_list("INGEST_TENNIS_YEARS"),
             ingest_tennis_tours,
             thesportsdb_euroleague_id: env_non_empty("THESPORTSDB_EUROLEAGUE_ID"),
+            bookmaker_margin,
             database_url,
             host,
             port,

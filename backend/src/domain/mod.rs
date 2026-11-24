@@ -1,4 +1,5 @@
 // src/domain/mod.rs
 pub mod backtester;
 pub mod betting_exchange;
+pub mod odds;
 pub mod settlement;

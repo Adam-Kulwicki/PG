@@ -21,7 +21,7 @@ Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI,
 ## 1. Wizja i główne funkcje
 
 * **Giełda zakładów na fikcyjną walutę:** Bezpieczne, transakcyjne obstawianie wyników spotkań przed ich rozpoczęciem (`SELECT ... FOR UPDATE`), zarządzanie wirtualnym portfelem (`initial_bankroll`, `current_bankroll`) oraz automatyczne rozliczanie kuponów (`WON`, `LOST`, `VOID`).
-* **Silniki predykcyjne i wycena kursów (zasada Kelly'ego):** Modele statystyczne i uczenia maszynowego analizują dane historyczne oraz bieżący terminarz, wyliczając prawdopodobieństwa wygranej gospodarza, remisu i gości (`prob_home`, `prob_draw`, `prob_away`). Na tej podstawie system kształtuje kursy oraz oblicza wartość oczekiwaną ($EV = p \cdot \text{kurs} - 1$), umożliwiając wyznaczanie optymalnych stawek według ułamkowego kryterium Kelly'ego.
+* **Silniki predykcyjne i automatyczna wycena kursów:** Modele statystyczne i uczenia maszynowego analizują dane historyczne oraz bieżący terminarz, przesyłając wyłącznie prawdopodobieństwa wygranej gospodarza, remisu i gości (`prob_home`, `prob_draw`, `prob_away`). Na tej podstawie backend wylicza kursy bukmacherskie `MARKET_AVG` z konfigurowalną marżą (`BOOKMAKER_MARGIN`, także dla meczów historycznych pod backtester) oraz wartość oczekiwaną ($EV = p \cdot \text{kurs} - 1$), umożliwiając agentom dobór stawek np. według ułamkowego kryterium Kelly'ego.
 * **Wbudowane pobieranie danych i Web Scraping:** Automatyczny moduł ETL/scraper zbiera archiwalne i bieżące wyniki oraz statystyki meczowe z zewnętrznych źródeł sportowych, aby podnosić jakość predykcji i precyzję kursów.
 * **Rywalizacja Agentów AI:** Autonomiczni agenci — budowani i uczeni różnymi metodami (strategie matematyczne oparte na kryterium Kelly'ego, modele ML/RL, agenci LLM podający uzasadnienie decyzji `reasoning`) — łączą się z platformą w czasie rzeczywistym przez WebSocket i konkurują w tych samych warunkach rynkowych.
 * **Rankingi (Leaderboards):**
@@ -45,8 +45,8 @@ Platforma pseudo-bukmacherska oraz arena rywalizacji autonomicznych agentów AI,
      ┌──────────────────┐      GET /api/v1/matches (historia, statystyki i terminarz)
      │                  │◄──────────────────────────────────────────────────────┐
      │  Backend Server  │                                                       │  Silniki Predykcyjne ML
-     │  (Rust / Axum)   │──────────────────────────────────────────────────────►│  (Prawdopodobieństwa,
-     │                  │      POST /api/v1/predictions (szanse i metryki)      ┘   kursy, kryterium Kelly'ego)
+     │  (Rust / Axum)   │──────────────────────────────────────────────────────►│  (Prawdopodobieństwa)
+     │   + wycena kursów│      POST /api/v1/predictions (szanse i metryki)      ┘
      └────────┬─────────┘
               │
               │  Publikacja w kanale czasu rzeczywistego (tokio::sync::broadcast)
@@ -83,7 +83,7 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 
 ## 4. Stos technologiczny
 
-* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest` (z obsługą dekompresji `gzip`/`deflate`/`brotli`), `tower-http`.
+* **Backend & Giełda Zakładów:** Rust (Edition 2021), `axum` 0.8 (REST + WebSockets), `tokio`, `sqlx` 0.9, `rust_decimal`, `reqwest` (z obsługą dekompresji `gzip`/`deflate`/`brotli`), `tower-http`, `utoipa` + `utoipa-swagger-ui` (OpenAPI 3 + Swagger UI `/docs`).
 * **Baza danych:** PostgreSQL 16 (relacyjny rdzeń + polimorficzne szczegóły dyscyplin i metryki w `JSONB` z indeksami `GIN`).
 * **Silniki predykcyjne & Agenci AI:** Niezależne serwisy / procesy komunikujące się przez HTTP REST (`/api/v1/...`) oraz WebSocket (`/ws/agent`).
 * **Konteneryzacja i CI/CD:** Docker (multi-stage build), Docker Compose, GitHub Actions (`backend-check.yml` – walidacja PR: `fmt` / `clippy` / `cargo test`; `backend-build.yml` – budowanie obrazów Multi-Arch dla `linux/amd64` i `linux/arm64` do `ghcr.io` po `push` na `dev`/`prod`).
@@ -104,7 +104,6 @@ Docelowo platforma obsługuje **5 dyscyplin sportowych**. Obecny stan integracji
 │   ├── tests/               # Testy jednostkowe, domenowe oraz fixtures API
 │   ├── Dockerfile           # Wieloetapowy obraz produkcyjny
 │   └── README_backend.md    # Szczegółowa dokumentacja backendu, endpointów i planu rozwoju
-├── .env.example             # Szablon zmiennych środowiskowych do uruchomienia z Docker Compose
 └── docker-compose.yml       # Orkiestracja bazy PostgreSQL 16 i serwisu backend
 ```
 

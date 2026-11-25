@@ -172,6 +172,7 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
+ "zip",
 ]
 
 [[package]]

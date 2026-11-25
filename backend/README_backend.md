@@ -24,6 +24,7 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
   * `202611010002_init_predictions.sql` — tabele `prediction_models` oraz `predictions` z unikalnością jednej prognozy na parę `(match_id, model_id)`.
   * `202611010003_init_agents_bets.sql` — tabele `agents` (`CHECK (current_bankroll >= 0.00)`) oraz `bets` (maksymalnie jeden zakład agenta na jeden mecz).
   * `202611010004_seed_dev_data.sql` — dane startowe dla 3 sportów (6 meczów, kursy `MARKET_AVG`, 2 modele predykcyjne, 2 agentów testowych).
+  * `202611260001_add_cs2_sport.sql` — rozszerzenie ograniczeń `CHECK (sport IN (...))` o dyscyplinę `CS2`.
 
 ### Warstwa ETL / Ingest (`src/ingest/`)
 * **Cykliczny harmonogram w tle** (`spawn_scheduler`) uruchamiany przy starcie serwera (sterowany przez `INGEST_ENABLED` oraz `INGEST_INTERVAL_MINUTES`), z ręcznym wyzwalaniem przez REST API.
@@ -44,6 +45,10 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
   * **BALLDONTLIE API (`v1/games`):** terminarz (`SCHEDULED`), mecze `LIVE`, dokładny `datetime` UTC, punkty w kwartach i dogrywkach (`home_q1..4`, `home_ot1..3`, `visitor_q1..4`, `visitor_ot1..3`), obsługa `postponed` i jawnego pola `season`, paginacja kursorowa z pauzą 12 s (dla darmowego limitu 5 req/min) oraz fallback dla historii w trybie `auto`.
   * **Opcjonalna Euroliga z TheSportsDB** (`THESPORTSDB_EUROLEAGUE_ID`).
 * **Tenis (`src/ingest/tennis.rs`):** archiwalne pliki CSV z mirrora **`Aneeshers/tennis-sackmann-archive`** (ATP/WTA, pomijanie walkowerów `W/O` i `DEF`, rozkładanie rund drabinki na kolejne dni, deterministyczne losowanie strony `home`/`away` na podstawie FNV-1a przeciwko *data leakage*) + bieżące drabinki z **ESPN Scoreboard API** (wyłącznie single, pomijanie zawodników `TBD`).
+* **Counter-Strike 2 (`src/ingest/cs2/`):** hybryda dwóch źródeł:
+  * **Kaggle CSV (`ektarr/counter-strike-pro-matches`, `kaggle_csv.rs`):** historia i wzbogacanie meczów o dokładne rundy map (`is_total == false`), 5-osobowe składy i statystyki graczy (`kills`, `deaths`, `assists`, `adr`, `kast`, `kddiff`); przy podanym `KAGGLE_API_TOKEN` automatycznie wykrywa nowe wersje datasetu przez Kaggle API i pobiera plik z obsługą ZIP do `data/cs2_games.csv`.
+  * **PandaScore Free (`/csgo/*`, `pandascore.rs`):** terminarz (`SCHEDULED`), mecze `LIVE`, wyniki końcowe z ostatnich 14 dni, statusy `CANCELLED`/`POSTPONED` oraz składy turniejowe (`/tournaments/{id}/rosters`).
+  * Normalizacja aliasów drużyn CS2 (`teams.rs`) oraz symetryczne, bezstratne scalanie `MatchDetails::Cs2` w `store_matches`.
 
 ### Giełda zakładów, kursy, rozliczenia i backtester (`src/domain/`)
 * **Wyliczanie kursów (`odds.rs`):** automatyczne przeliczanie prawdopodobieństw na kursy bukmacherskie `MARKET_AVG` z konfigurowalną marżą `BOOKMAKER_MARGIN` (domyślnie `0.05`, wzór $O = \frac{1}{p(1 + m)}$, przycinanie do `[1.01, 100.00]`, obsługa rynku `1X2` dla piłki i `12` dla koszykówki/tenisa) przy każdym `POST /api/v1/predictions` — zarówno dla `SCHEDULED`, jak i `FINISHED` (pod backtester).
@@ -60,7 +65,7 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
 * Jednolita obsługa błędów `AppError` (`src/error.rs`) mapowana na odpowiedzi JSON `{"error": "...", "code": "..."}`.
 
 ### Testy i CI/CD
-* Zestaw testów w `tests/`: `backtester.rs`, `betting_exchange.rs`, `openapi.rs`, `predictions.rs`, `settlement.rs`, `ingest_football.rs`, `ingest_basketball.rs`, `ingest_tennis.rs` oraz `tests/fixtures/` (`nba_base_sample.json`, `nba_advanced_sample.json`, `football_data_uk_e0_sample.csv`, `clubelo_team_page_sample.html`, `clubelo_home_and_fixtures_sample.html`) — obejmujący m.in. `football-data.co.uk`, `clubelo.com` (`D - 1`), `stats.nba.com`, BALLDONTLIE, deduplikację/scalanie, wyliczanie kursów i kontrakt OpenAPI.
+* Zestaw testów w `tests/`: `backtester.rs`, `betting_exchange.rs`, `openapi.rs`, `predictions.rs`, `settlement.rs`, `ingest_football.rs`, `ingest_basketball.rs`, `ingest_tennis.rs`, `ingest_cs2.rs`, `logging.rs` oraz `tests/fixtures/` (`nba_base_sample.json`, `nba_advanced_sample.json`, `football_data_uk_e0_sample.csv`, `clubelo_team_page_sample.html`, `clubelo_home_and_fixtures_sample.html`, `cs2_kaggle_sample.csv`) — obejmujący m.in. `football-data.co.uk`, `clubelo.com` (`D - 1`), `stats.nba.com`, BALLDONTLIE, Kaggle CS2 CSV, PandaScore, deduplikację/scalanie, wyliczanie kursów i kontrakt OpenAPI.
 * Workflow GitHub Actions:
   * `.github/workflows/backend-check.yml` (`pull_request` na `dev`/`prod` oraz `workflow_call`): `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --locked`.
   * `.github/workflows/backend-build.yml` (`push` na `dev`/`prod`): wywołuje `backend-check.yml`, buduje natywne obrazy Multi-Arch (`linux/amd64`, `linux/arm64`) oraz scala manifest w `ghcr.io` pod tagi `:dev`, `:prod` i `:latest` dla `prod`.
@@ -80,17 +85,20 @@ backend/
 │   ├── 202611010001_init_sports_core.sql
 │   ├── 202611010002_init_predictions.sql
 │   ├── 202611010003_init_agents_bets.sql
-│   └── 202611010004_seed_dev_data.sql
+│   ├── 202611010004_seed_dev_data.sql
+│   └── 202611260001_add_cs2_sport.sql
 ├── tests/                      # Testy jednostkowe i domenowe (cargo test)
 │   ├── fixtures/
 │   │   ├── clubelo_home_and_fixtures_sample.html
 │   │   ├── clubelo_team_page_sample.html
+│   │   ├── cs2_kaggle_sample.csv
 │   │   ├── football_data_uk_e0_sample.csv
 │   │   ├── nba_advanced_sample.json
 │   │   └── nba_base_sample.json
 │   ├── backtester.rs
 │   ├── betting_exchange.rs
 │   ├── ingest_basketball.rs
+│   ├── ingest_cs2.rs
 │   ├── ingest_football.rs
 │   ├── ingest_tennis.rs
 │   ├── logging.rs
@@ -137,7 +145,12 @@ backend/
         │   ├── football_data_uk.rs # Parser CSV football-data.co.uk i fixtures.csv
         │   └── clubelo.rs      # Parser clubelo.com (D - 1 i /Fixtures)
         ├── basketball.rs       # stats.nba.com (Base+Advanced) + BALLDONTLIE + TheSportsDB
-        └── tennis.rs           # Mirror Sackmanna + ESPN Scoreboard
+        ├── tennis.rs           # Mirror Sackmanna + ESPN Scoreboard
+        └── cs2/                # Counter-Strike 2 (hybryda)
+            ├── mod.rs          # Orkiestracja sync()
+            ├── kaggle_csv.rs   # Pobieranie z kontrolą wersji (ZIP/CSV) i parser Kaggle CSV
+            ├── pandascore.rs   # Klient PandaScore Free (/csgo/*)
+            └── teams.rs        # Normalizacja aliasów drużyn CS2
 ```
 
 ---
@@ -187,7 +200,7 @@ Interaktywna dokumentacja Swagger UI (`/docs`) ładująca specyfikację OpenAPI 
 #### `GET /api/v1/matches`
 Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_date`, a następnie `id` (`ORDER BY m.match_date ASC, m.id ASC`), wraz z nazwami uczestników i kursami `MARKET_AVG`.
 * **Opcjonalne parametry query:**
-  * `sport` — np. `FOOTBALL`, `BASKETBALL`, `TENNIS` (wielkość liter bez znaczenia)
+  * `sport` — np. `FOOTBALL`, `BASKETBALL`, `TENNIS`, `CS2` (wielkość liter bez znaczenia)
   * `status` — np. `SCHEDULED`, `LIVE`, `FINISHED`, `POSTPONED`, `CANCELLED`
   * `season` — np. `2024-2025`, `2026`
   * `limit` — maksymalna liczba wyników na stronę (przycinana do zakresu `1..=5000`, `MAX_MATCHES_LIMIT = 5000`; brak parametru = wszystkie pasujące mecze)
@@ -197,7 +210,8 @@ Zwraca listę meczów (`MatchWithDetailsDto`) posortowaną rosnąco po `match_da
 * **Uwaga dot. `match_details`:**
   * dla piłki nożnej (`sport_type: "football"`): `ht_home`, `ht_away`, `round` oraz opcjonalnie `home_stats` / `away_stats` (`FootballTeamStats`: `xg`, `shots`, `shots_on_target`, `corners`, `fouls`, `yellow_cards`, `red_cards`) i `pre_match_elo` (`FootballPreMatchElo`: `home_elo`, `away_elo`, `elo_diff`, `home_rank`, `away_rank`, `clubelo_prob_home/draw/away`),
   * dla koszykówki (`sport_type: "basketball"`): oprócz pól `quarters` i `overtime` obiekt może zawierać opcjonalne pola `season_type` (`"Regular Season"` / `"Playoffs"`), `home_stats` oraz `away_stats` (`BasketballTeamStats` — 21 statystyk `Base`: `min`, `fgm`, `fga`, `fg_pct`, `fg3m`, `fg3a`, `fg3_pct`, `ftm`, `fta`, `ft_pct`, `oreb`, `dreb`, `reb`, `ast`, `tov`, `stl`, `blk`, `blka`, `pf`, `pfd`, `plus_minus` oraz 9 metryk `Advanced`: `off_rating`, `def_rating`, `net_rating`, `pace`, `efg_pct`, `ts_pct`, `tm_tov_pct`, `oreb_pct`, `pie`),
-  * dla tenisa (`sport_type: "tennis"`): `surface`, `best_of`, `sets`, `home_aces`, `away_aces`.
+  * dla tenisa (`sport_type: "tennis"`): `surface`, `best_of`, `sets`, `home_aces`, `away_aces`,
+  * dla CS2 (`sport_type: "cs2"`): `best_of`, `tournament_name`, `tournament_tier`, `maps` (`Cs2MapResult`), `home_roster`/`away_roster` (`Cs2Player`), opcjonalnie `player_stats` (`Cs2PlayerStats`) i `veto` (`Cs2VetoAction`).
 
 #### `GET /api/v1/matches/{id}`
 Zwraca szczegóły pojedynczego meczu (`MatchWithDetailsDto`) lub `404 Not Found`, jeśli mecz nie istnieje.
@@ -244,12 +258,12 @@ Przyjmuje predykcję z silnika ML (automatycznie rejestruje model po parze `(mod
 
 #### `POST /api/v1/ingest/{sport}`
 Uruchamia w tle (`tokio::spawn`) ręczny import danych sportowych i od razu zwraca `202 Accepted`.
-* **Parametr ścieżki `{sport}`:** `football`, `basketball`, `tennis` albo `all` (inna wartość zwraca `400 Bad Request`).
+* **Parametr ścieżki `{sport}`:** `football`, `basketball`, `tennis`, `cs2` albo `all` (inna wartość zwraca `400 Bad Request`).
 * **Opcjonalny parametr query:** `?history=true` (domyślnie `false` — pobiera również sezony historyczne).
 * **Odpowiedź (`202 Accepted`):**
   ```json
   {
-    "started": ["football", "basketball", "tennis"],
+    "started": ["football", "basketball", "tennis", "cs2"],
     "history": true
   }
   ```
@@ -350,6 +364,8 @@ Wszystkie ustawienia aplikacji wczytywane są w `src/config.rs` (oraz w `src/mai
 | `FOOTBALL_DATA_API_KEY` | Nie | `None` | Klucz do Football-Data.org (opcjonalne uzupełnienie bieżącego sezonu piłki nożnej o `utcDate`, kolejki i statusy `LIVE`; pusta wartość traktowana jako `None`) |
 | `BALLDONTLIE_API_KEY` | Nie | `None` | Klucz do BALLDONTLIE (terminarz, kwarty, dokładny `datetime` UTC NBA oraz fallback historii; pusta wartość z `.env` traktowana jako `None`) |
 | `THESPORTSDB_EUROLEAGUE_ID` | Nie | `None` | ID ligi Euroligi w TheSportsDB (bez niego lub przy pustej wartości Euroliga jest pomijana) |
+| `PANDASCORE_API_KEY` | Nie | `None` | Klucz Bearer do PandaScore Free (`/csgo/*`) — terminarz, mecze `LIVE` i bieżące wyniki CS2 |
+| `KAGGLE_API_TOKEN` | Nie | `None` | Access token Bearer (`KGAT_...`) do automatycznego pobierania CSV CS2 (`ektarr/counter-strike-pro-matches`) |
 | `BOOKMAKER_MARGIN` | Nie | `0.05` | Marża bukmacherska stosowana przy wyliczaniu kursów `MARKET_AVG` z prawdopodobieństw modeli (`[0.00, 1.00)`) |
 | `INGEST_ENABLED` | Nie | `true` | Czy uruchamiać automatyczny harmonogram ETL w tle |
 | `INGEST_INTERVAL_MINUTES` | Nie | `60` | Odstęp (w minutach) między cyklami ingestu |

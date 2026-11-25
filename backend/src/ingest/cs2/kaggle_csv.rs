@@ -1,7 +1,7 @@
 // src/ingest/cs2/kaggle_csv.rs
 //! Archiwalny i przyrostowy import CS2 z datasetu Kaggle (`ektarr/counter-strike-pro-matches`).
 //!
-//! Gdy ustawiono `KAGGLE_USERNAME` i `KAGGLE_KEY`, moduł sprawdza w każdym cyklu numer wersji
+//! Gdy ustawiono `KAGGLE_API_TOKEN`, moduł sprawdza w każdym cyklu numer wersji
 //! datasetu przez Kaggle REST API i pobiera nowy plik CSV tylko przy zmianie wersji lub braku cache.
 
 use std::{
@@ -436,15 +436,11 @@ pub fn parse_kaggle_cs2_csv(
     Ok(ingested)
 }
 
-async fn fetch_kaggle_version(
-    client: &reqwest::Client,
-    username: &str,
-    api_key: &str,
-) -> AppResult<u64> {
+async fn fetch_kaggle_version(client: &reqwest::Client, api_token: &str) -> AppResult<u64> {
     let url = format!("{KAGGLE_API_BASE_URL}/view/{KAGGLE_CS2_DATASET}");
     let response = client
         .get(&url)
-        .basic_auth(username, Some(api_key))
+        .bearer_auth(api_token)
         .send()
         .await?
         .error_for_status()?
@@ -453,16 +449,12 @@ async fn fetch_kaggle_version(
     parse_kaggle_dataset_version(&response)
 }
 
-async fn download_kaggle_csv(
-    client: &reqwest::Client,
-    username: &str,
-    api_key: &str,
-) -> AppResult<String> {
+async fn download_kaggle_csv(client: &reqwest::Client, api_token: &str) -> AppResult<String> {
     let url = format!("{KAGGLE_API_BASE_URL}/download/{KAGGLE_CS2_DATASET}/{KAGGLE_CS2_FILE}");
     let bytes = client
         .get(&url)
         .timeout(Duration::from_secs(KAGGLE_DOWNLOAD_TIMEOUT_SECS))
-        .basic_auth(username, Some(api_key))
+        .bearer_auth(api_token)
         .send()
         .await?
         .error_for_status()?
@@ -507,17 +499,16 @@ fn write_cache_files(csv_path: &Path, version_path: &Path, csv_content: &str, ve
 
 /// Synchronizuje historyczne mecze CS2 z Kaggle CSV (`ektarr/counter-strike-pro-matches`).
 ///
-/// Gdy podano `KAGGLE_USERNAME` i `KAGGLE_KEY`, sprawdza wersję w każdym cyklu i pobiera plik
+/// Gdy podano `KAGGLE_API_TOKEN`, sprawdza wersję w każdym cyklu i pobiera plik
 /// ponownie wyłącznie po publikacji nowej wersji, co automatycznie wzbogaca mecze z PandaScore.
 pub async fn sync_kaggle_csv(state: &AppState, include_history: bool) -> AppResult<usize> {
     let cache_csv_path = Path::new(CS2_CACHE_CSV_PATH);
     let cache_version_path = Path::new(CS2_CACHE_VERSION_PATH);
     let default_tier = infer_tier_from_filename(KAGGLE_CS2_FILE);
 
-    let csv_content = match (&state.config.kaggle_username, &state.config.kaggle_key) {
-        (Some(username), Some(api_key)) => {
-            let remote_version =
-                fetch_kaggle_version(&state.http_client, username, api_key).await?;
+    let csv_content = match state.config.kaggle_api_token.as_deref() {
+        Some(api_token) => {
+            let remote_version = fetch_kaggle_version(&state.http_client, api_token).await?;
             let cached_version = read_cached_version(cache_version_path);
             let has_cache_file = cache_csv_path.exists();
 
@@ -538,7 +529,7 @@ pub async fn sync_kaggle_csv(state: &AppState, include_history: bool) -> AppResu
                     remote_version,
                     "Kaggle CS2: pobieranie datasetu CSV"
                 );
-                let downloaded = download_kaggle_csv(&state.http_client, username, api_key).await?;
+                let downloaded = download_kaggle_csv(&state.http_client, api_token).await?;
                 write_cache_files(
                     cache_csv_path,
                     cache_version_path,
@@ -548,7 +539,7 @@ pub async fn sync_kaggle_csv(state: &AppState, include_history: bool) -> AppResu
                 downloaded
             }
         }
-        _ => {
+        None => {
             if !include_history || !cache_csv_path.exists() {
                 return Ok(0);
             }

@@ -46,7 +46,7 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
   * **Opcjonalna Euroliga z TheSportsDB** (`THESPORTSDB_EUROLEAGUE_ID`).
 * **Tenis (`src/ingest/tennis.rs`):** archiwalne pliki CSV z mirrora **`Aneeshers/tennis-sackmann-archive`** (ATP/WTA, pomijanie walkowerów `W/O` i `DEF`, rozkładanie rund drabinki na kolejne dni, deterministyczne losowanie strony `home`/`away` na podstawie FNV-1a przeciwko *data leakage*) + bieżące drabinki z **ESPN Scoreboard API** (wyłącznie single, pomijanie zawodników `TBD`).
 * **Counter-Strike 2 (`src/ingest/cs2/`):** hybryda dwóch źródeł:
-  * **Kaggle CSV (`ektarr/counter-strike-pro-matches`, `kaggle_csv.rs`):** historia i wzbogacanie meczów o dokładne rundy map (`is_total == false`), 5-osobowe składy i statystyki graczy (`kills`, `deaths`, `assists`, `adr`, `kast`, `kddiff`); przy podanych `KAGGLE_USERNAME`/`KAGGLE_KEY` automatycznie wykrywa nowe wersje datasetu przez Kaggle API i pobiera plik z obsługą ZIP do `data/cs2_games.csv`.
+  * **Kaggle CSV (`ektarr/counter-strike-pro-matches`, `kaggle_csv.rs`):** historia i wzbogacanie meczów o dokładne rundy map (`is_total == false`), 5-osobowe składy i statystyki graczy (`kills`, `deaths`, `assists`, `adr`, `kast`, `kddiff`); przy podanym `KAGGLE_API_TOKEN` automatycznie wykrywa nowe wersje datasetu przez Kaggle API i pobiera plik z obsługą ZIP do `data/cs2_games.csv`.
   * **PandaScore Free (`/csgo/*`, `pandascore.rs`):** terminarz (`SCHEDULED`), mecze `LIVE`, wyniki końcowe z ostatnich 14 dni, statusy `CANCELLED`/`POSTPONED` oraz składy turniejowe (`/tournaments/{id}/rosters`).
   * Normalizacja aliasów drużyn CS2 (`teams.rs`) oraz symetryczne, bezstratne scalanie `MatchDetails::Cs2` w `store_matches`.
 
@@ -365,8 +365,7 @@ Wszystkie ustawienia aplikacji wczytywane są w `src/config.rs` (oraz w `src/mai
 | `BALLDONTLIE_API_KEY` | Nie | `None` | Klucz do BALLDONTLIE (terminarz, kwarty, dokładny `datetime` UTC NBA oraz fallback historii; pusta wartość z `.env` traktowana jako `None`) |
 | `THESPORTSDB_EUROLEAGUE_ID` | Nie | `None` | ID ligi Euroligi w TheSportsDB (bez niego lub przy pustej wartości Euroliga jest pomijana) |
 | `PANDASCORE_API_KEY` | Nie | `None` | Klucz Bearer do PandaScore Free (`/csgo/*`) — terminarz, mecze `LIVE` i bieżące wyniki CS2 |
-| `KAGGLE_USERNAME` | Nie | `None` | Nazwa użytkownika Kaggle do automatycznego pobierania CSV CS2 (`ektarr/counter-strike-pro-matches`) |
-| `KAGGLE_KEY` | Nie | `None` | Klucz API Kaggle do automatycznego pobierania CSV CS2 |
+| `KAGGLE_API_TOKEN` | Nie | `None` | Access token Bearer (`KGAT_...`) do automatycznego pobierania CSV CS2 (`ektarr/counter-strike-pro-matches`) |
 | `BOOKMAKER_MARGIN` | Nie | `0.05` | Marża bukmacherska stosowana przy wyliczaniu kursów `MARKET_AVG` z prawdopodobieństw modeli (`[0.00, 1.00)`) |
 | `INGEST_ENABLED` | Nie | `true` | Czy uruchamiać automatyczny harmonogram ETL w tle |
 | `INGEST_INTERVAL_MINUTES` | Nie | `60` | Odstęp (w minutach) między cyklami ingestu |

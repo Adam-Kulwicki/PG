@@ -142,6 +142,12 @@ pub struct Config {
     pub football_data_api_key: Option<String>,
     /// Klucz do BALLDONTLIE (opcjonalny – służy do terminarza, kwart, dokładnego `datetime` UTC i fallbacku historii).
     pub balldontlie_api_key: Option<String>,
+    /// Klucz Bearer do PandaScore Free (`/csgo/*` dla CS2; opcjonalny).
+    pub pandascore_api_key: Option<String>,
+    /// Nazwa użytkownika Kaggle do automatycznego pobierania CSV CS2 (`KAGGLE_USERNAME`; opcjonalna).
+    pub kaggle_username: Option<String>,
+    /// Klucz API Kaggle do automatycznego pobierania CSV CS2 (`KAGGLE_KEY`; opcjonalny).
+    pub kaggle_key: Option<String>,
     /// Czy uruchamiać cykliczny import danych sportowych (`INGEST_ENABLED`, domyślnie `true`).
     pub ingest_enabled: bool,
     /// Co ile minut powtarzać import bieżących danych (`INGEST_INTERVAL_MINUTES`, domyślnie 60).
@@ -214,6 +220,9 @@ impl Config {
         // Klucze API są opcjonalne – puste zmienne z `.env` nie udają aktywnego klucza
         let football_data_api_key = env_non_empty("FOOTBALL_DATA_API_KEY");
         let balldontlie_api_key = env_non_empty("BALLDONTLIE_API_KEY");
+        let pandascore_api_key = env_non_empty("PANDASCORE_API_KEY");
+        let kaggle_username = env_non_empty("KAGGLE_USERNAME");
+        let kaggle_key = env_non_empty("KAGGLE_KEY");
 
         let ingest_enabled = env::var("INGEST_ENABLED")
             .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no"))
@@ -319,6 +328,9 @@ impl Config {
             port,
             football_data_api_key,
             balldontlie_api_key,
+            pandascore_api_key,
+            kaggle_username,
+            kaggle_key,
         }
     }
 

@@ -52,7 +52,7 @@ Centralny serwis backendowy napisany w języku **Rust** (`axum` + `sqlx` + `toki
   * Walidacja stawki (`> 0`, maks. 2 miejsca po przecinku, wystarczające saldo), statusu meczu (`SCHEDULED` i przed czasem rozpoczęcia) oraz dostępności kursu `MARKET_AVG`.
   * Wyliczanie wartości oczekiwanej `EV = prob * odds - 1` na podstawie średniej (`AVG`) z predykcji wszystkich modeli dla danego meczu oraz zamrożenie kursu `odds_taken`.
 * **Rozliczanie kuponów (`settlement.rs`):** automatyczne rozliczanie wszystkich `PENDING` zakładów na mecze ze statusem `FINISHED` i `CANCELLED` (`WON`, `LOST`, `VOID` ze zwrotem stawki) — każdy mecz w osobnej transakcji (`FOR UPDATE` po `agent_id` ograniczające ryzyko deadlocków) — oraz powiadamianie właścicieli kuponów przez WebSocket.
-* **Silnik Backtestingu („Wehikuł czasu” — `backtester.rs`):** odtwarza historyczne sezony dzień po dniu (grupowanie po dacie UTC), otwiera w pamięci okno zakładów (`open_backtest_matches`), rozsyła `MATCH_OPPORTUNITY` bez wyniku, zbiera zakłady przez `bet_window_ms` i natychmiast rozlicza dzień. Posiada zabezpieczenie przed równoległym uruchomieniem (`AtomicBool` + RAII guard -> `409 Conflict`) oraz opcję `reset_agents` cofającą poprzednie rozliczone zakłady.
+* **Silnik Backtestingu („Wehikuł czasu” — `backtester.rs`):** odtwarza historyczne sezony dzień po dniu (grupowanie po dacie UTC) na w pełni izolowanych, wirtualnych portfelach w pamięci serwera (`BacktestStore`, bez modyfikowania produkcyjnych tabel `agents` i `bets`). Otwiera okno zakładów dla danego dnia, rozsyła `MATCH_OPPORTUNITY` bez wyniku, zbiera zakłady przez `bet_window_ms`, natychmiast rozlicza wirtualne kupony i zapisuje raport przebiegu (`leaderboard`, kupony z `match_date` i `bankroll_after`). Posiada zabezpieczenie przed równoległym uruchomieniem (`AtomicBool` + RAII guard -> `409 Conflict`).
 
 ### Warstwa REST API i WebSocket (`src/api/`, `src/ws/`)
 * Kompletny router REST pod `/api/v1` (w tym paginacja i zakres dat w `GET /api/v1/matches`: `limit`, `offset`, `date_from`, `date_to`), diagnostyka `/health` oraz interaktywna dokumentacja **Swagger UI** pod `/docs` i specyfikacja OpenAPI 3 pod `/api-docs/openapi.json` (`utoipa` + `utoipa-swagger-ui`).
@@ -159,7 +159,12 @@ backend/
 | `POST` | `/api/v1/predictions` | `201 Created` | Zapis/aktualizacja predykcji modelu ML, wyliczenie kursów `MARKET_AVG` i broadcast okazji na WS |
 | `POST` | `/api/v1/ingest/{sport}` | `202 Accepted` | Ręczne uruchomienie importu danych sportowych w tle |
 | `POST` | `/api/v1/simulation/settle` | `200 OK` | Rozliczenie wszystkich nierozliczonych zakładów na zakończone mecze |
-| `POST` | `/api/v1/simulation/backtest` | `202 Accepted` | Uruchomienie symulacji historycznej w tle |
+| `POST` | `/api/v1/simulation/backtest` | `202 Accepted` | Uruchomienie symulacji historycznej w tle na izolowanych wirtualnych portfelach |
+| `GET` | `/api/v1/simulation/backtest` | `200 OK` | Pełny raport aktualnego lub ostatniego przebiegu backtestu |
+| `GET` | `/api/v1/simulation/backtest/runs` | `200 OK` | Lista zapisanych w pamięci przebiegów backtestu (od najnowszego) |
+| `GET` | `/api/v1/simulation/backtest/runs/{run_id}` | `200 OK` | Pełny raport wskazanego przebiegu backtestu |
+| `GET` | `/api/v1/simulation/backtest/runs/{run_id}/leaderboard` | `200 OK` | Ranking wirtualnych portfeli agentów dla wskazanego przebiegu |
+| `GET` | `/api/v1/simulation/backtest/runs/{run_id}/bets` | `200 OK` | Wirtualne kupony postawione w danym przebiegu (opcjonalnie `?agent_id=...`) |
 
 ---
 
@@ -256,17 +261,25 @@ Rozlicza wszystkie zakłady ze statusem `PENDING` dla meczów o statusie `FINISH
   ```
 
 #### `POST /api/v1/simulation/backtest`
-Uruchamia symulację historyczną w tle i zwraca `202 Accepted` z obiektem planu `BacktestPlan` (`season`, `sport`, `total_matches`, `total_days`, `bet_window_ms`, `estimated_seconds`). Jeśli inny backtest aktualnie trwa, zwraca `409 Conflict`. Jeśli dla wybranego sezonu/sportu brak meczów `FINISHED` z wyznaczonym zwycięzcą i kursami `MARKET_AVG`, zwraca `404 Not Found`.
+Uruchamia symulację historyczną w tle na w pełni izolowanych wirtualnych portfelach i zwraca `202 Accepted` z obiektem planu `BacktestPlan` (`run_id`, `season`, `sport`, `total_matches`, `total_days`, `bet_window_ms`, `initial_bankroll`, `estimated_seconds`). Jeśli inny backtest aktualnie trwa, zwraca `409 Conflict`. Jeśli dla wybranego sezonu/sportu brak meczów `FINISHED` z wyznaczonym zwycięzcą i kursami `MARKET_AVG`, zwraca `404 Not Found`. Symulacja nigdy nie modyfikuje produkcyjnych tabel `agents` ani `bets`.
 * **Request body:**
   ```json
   {
     "season": "2025-2026",
     "sport": "FOOTBALL",
     "bet_window_ms": 500,
-    "reset_agents": false
+    "initial_bankroll": 1000.00
   }
   ```
-  *(Tylko `season` jest wymagane; `bet_window_ms` domyślnie `500`, maksymalnie `30000`.)*
+  *(Tylko `season` jest wymagane; `bet_window_ms` domyślnie `500`, maksymalnie `30000`; `initial_bankroll` opcjonalnie nadpisuje kapitał początkowy wszystkich wirtualnych portfeli w tej symulacji — brak oznacza użycie `agents.initial_bankroll` każdego agenta).*
+
+#### `GET /api/v1/simulation/backtest` oraz `/api/v1/simulation/backtest/runs...`
+Pozwalają pobrać wirtualne wyniki symulacji przechowywane w pamięci serwera (`MAX_STORED_RUNS = 20`):
+* `GET /api/v1/simulation/backtest` — pełny raport (`BacktestReport`: metadane przebiegu, `leaderboard` oraz chronologiczne `bets` z `match_date` i `bankroll_after`) dla aktywnego lub najnowszego przebiegu (`404`, jeśli nie uruchomiono żadnego backtestu).
+* `GET /api/v1/simulation/backtest/runs` — lista skrótów (`BacktestRunSummary`) od najnowszego przebiegu.
+* `GET /api/v1/simulation/backtest/runs/{run_id}` — pełny raport wybranego przebiegu.
+* `GET /api/v1/simulation/backtest/runs/{run_id}/leaderboard` — ranking wirtualnych portfeli agentów (`BacktestLeaderboardEntry`) dla wybranego `run_id`.
+* `GET /api/v1/simulation/backtest/runs/{run_id}/bets?agent_id=1` — lista wirtualnych kuponów (`VirtualBet`) z wybranego przebiegu (z opcjonalnym filtrem `agent_id`).
 
 ### Format błędów HTTP
 Każdy błąd aplikacji (`AppError`) zwracany jest jako JSON w postaci:
@@ -295,8 +308,8 @@ Format koperty: `{"event": "...", "data": {...}}`.
 * **`BET_RESULT`** *(do danego agenta)* — `{ "match_id", "accepted", "new_bankroll", "message" }`
 * **`MATCH_SETTLED`** *(do danego agenta)* — `{ "match_id", "winner", "bet_status", "profit_loss", "current_bankroll" }`
 * **`BANKROLL`** *(do danego agenta)* — `{ "current_bankroll" }`
-* **`BACKTEST_STARTED`** *(broadcast)* — `{ "season", "sport", "total_matches", "total_days" }`
-* **`BACKTEST_FINISHED`** *(broadcast)* — `{ "season", "total_matches", "settled_bets" }`
+* **`BACKTEST_STARTED`** *(broadcast)* — `{ "run_id", "season", "sport", "total_matches", "total_days", "initial_bankroll" }`
+* **`BACKTEST_FINISHED`** *(broadcast)* — `{ "run_id", "season", "total_matches", "settled_bets", "leaderboard" }`
 * **`ERROR`** *(do danego agenta)* — `{ "code", "message" }`
 
 ### Komendy od agenta do serwera (`AgentCommand`)
@@ -387,5 +400,5 @@ Możesz nadpisać tag pobieranego obrazu przez zmienną `BACKEND_IMAGE_TAG` (dom
 ### 3. Rozwój giełdy, typerów, API i backtestera
 * [x] **Interaktywna dokumentacja OpenAPI / Swagger UI (`src/api/docs.rs`):** Udostępniono `/docs` oraz `/api-docs/openapi.json` generowane automatycznie przez `utoipa`.
 * [ ] **Konta graczy (typerów) i ranking użytkowników:** Rozszerzenie modelu o graczy ludzkich (obok agentów AI), endpointy obstawiania przez REST dla aplikacji frontendowej oraz osobny ranking najlepszych typerów.
-* [ ] **Wirtualna symulacja portfela w backtesterze:** Opcja uruchamiania backtestu w izolacji (bez modyfikowania bieżącego salda produkcyjnego agentów).
+* [x] **Wirtualna symulacja portfela w backtesterze:** Backtester działa wyłącznie na izolowanych wirtualnych portfelach w pamięci (`BacktestStore`), z dedykowanymi endpointami wyników `GET /api/v1/simulation/backtest*` (bez modyfikowania bieżącego salda produkcyjnego agentów).
 * [ ] **Testy integracyjne z bazą PostgreSQL:** Rozbudowa testów w `tests/` o scenariusze bazodanowe (transakcje `place_bet`, rozliczenia `settle_matches`, `store_matches`).

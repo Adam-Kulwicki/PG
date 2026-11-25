@@ -48,7 +48,7 @@ pub const MAX_STORED_RUNS: usize = 20;
 pub struct BacktestParams {
     /// Sezon do odtworzenia, np. "2025-2026"
     pub season: String,
-    /// Opcjonalny filtr dyscypliny: FOOTBALL / BASKETBALL / TENNIS
+    /// Opcjonalny filtr dyscypliny: FOOTBALL / BASKETBALL / TENNIS / CS2
     pub sport: Option<String>,
     /// Czas (ms) na zakłady agentów w każdym dniu symulacji (domyślnie 500, max 30000)
     pub bet_window_ms: Option<u64>,

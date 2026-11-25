@@ -16,7 +16,7 @@ use crate::{
     state::AppState,
 };
 
-/// Trasa: `POST /{sport}` (`football`, `basketball`, `tennis` lub `all`).
+/// Trasa: `POST /{sport}` (`football`, `basketball`, `tennis`, `cs2` lub `all`).
 pub fn router() -> Router<AppState> {
     Router::new().route("/{sport}", post(trigger_ingest))
 }
@@ -43,7 +43,7 @@ pub struct IngestStartedResponse {
     path = "/api/v1/ingest/{sport}",
     tag = "Ingest",
     params(
-        ("sport" = String, Path, description = "Dyscyplina: football, basketball, tennis lub all"),
+        ("sport" = String, Path, description = "Dyscyplina: football, basketball, tennis, cs2 lub all"),
         IngestQuery
     ),
     responses(
@@ -64,7 +64,7 @@ pub async fn trigger_ingest(
             Some(s) => vec![*s],
             None => {
                 return Err(AppError::BadRequest(format!(
-                    "Nieznana dyscyplina '{}' (dozwolone: football, basketball, tennis, all)",
+                    "Nieznana dyscyplina '{}' (dozwolone: football, basketball, tennis, cs2, all)",
                     sport
                 )))
             }

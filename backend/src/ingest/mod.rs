@@ -10,6 +10,7 @@
 //! nie mają wpisów w `match_odds` i nie można na nie obstawiać, dopóki kursy nie zostaną dodane.
 
 pub mod basketball;
+pub mod cs2;
 pub mod football;
 pub mod tennis;
 
@@ -21,12 +22,14 @@ use sqlx::{types::Json, PgConnection, PgPool};
 
 use crate::{
     error::{AppError, AppResult},
-    models::match_model::{FootballPreMatchElo, FootballTeamStats, MatchDetails},
+    models::match_model::{
+        Cs2MapResult, Cs2Player, FootballPreMatchElo, FootballTeamStats, MatchDetails,
+    },
     state::AppState,
 };
 
 /// Obsługiwane dyscypliny w kolejności, w jakiej są importowane w każdym cyklu.
-pub const SPORTS: [&str; 3] = ["football", "basketball", "tennis"];
+pub const SPORTS: [&str; 4] = ["football", "basketball", "tennis", "cs2"];
 
 /// Ile razy ponawiamy zapytanie po odpowiedzi `429 Too Many Requests`.
 const MAX_RATE_LIMIT_RETRIES: u32 = 3;
@@ -57,7 +60,7 @@ impl IngestedParticipant {
 /// Mecz znormalizowany do schematu bazy, gotowy do zapisu przez [`store_matches`].
 #[derive(Debug, Clone)]
 pub struct IngestedMatch {
-    /// "FOOTBALL", "BASKETBALL" lub "TENNIS".
+    /// "FOOTBALL", "BASKETBALL", "TENNIS" lub "CS2".
     pub sport: &'static str,
     /// Unikalny kod rozgrywek (`competitions.external_code`), np. "PL".
     pub competition_code: String,
@@ -295,8 +298,52 @@ fn merge_football_pre_match_elo(
     }
 }
 
-/// Scala szczegóły meczu z wielu źródeł (np. BALLDONTLIE + `stats.nba.com` albo
-/// Football-Data.org + `football-data.co.uk` + ClubElo) niezależnie od kolejności ich uruchomienia.
+/// Scala listę map CS2, preferując źródło dostarczające dokładne wyniki rundowe (Kaggle CSV)
+/// nad samą listą map i zwycięzców (PandaScore Free).
+fn merge_cs2_maps(existing: Vec<Cs2MapResult>, incoming: Vec<Cs2MapResult>) -> Vec<Cs2MapResult> {
+    if incoming.is_empty() {
+        return existing;
+    }
+    if existing.is_empty() {
+        return incoming;
+    }
+
+    let count_scored = |maps: &[Cs2MapResult]| {
+        maps.iter()
+            .filter(|m| m.home_score.is_some() && m.away_score.is_some())
+            .count()
+    };
+    if count_scored(&incoming) >= count_scored(&existing) {
+        incoming
+    } else {
+        existing
+    }
+}
+
+/// Wybiera dokładniejszy skład drużyny CS2 – skład z przypisanymi statystykami meczowymi ma pierwszeństwo
+/// przed szerszym składem turniejowym z PandaScore.
+fn merge_cs2_rosters(
+    existing: Vec<Cs2Player>,
+    incoming: Vec<Cs2Player>,
+    existing_has_stats: bool,
+    incoming_has_stats: bool,
+) -> Vec<Cs2Player> {
+    if incoming.is_empty() {
+        return existing;
+    }
+    if existing.is_empty() {
+        return incoming;
+    }
+    if existing_has_stats && !incoming_has_stats {
+        existing
+    } else {
+        incoming
+    }
+}
+
+/// Scala szczegóły meczu z wielu źródeł (np. BALLDONTLIE + `stats.nba.com`,
+/// Football-Data.org + `football-data.co.uk` + ClubElo albo PandaScore + Kaggle CSV)
+/// niezależnie od kolejności ich uruchomienia.
 pub fn merge_match_details(existing: MatchDetails, incoming: MatchDetails) -> MatchDetails {
     match (existing, incoming) {
         (
@@ -354,6 +401,59 @@ pub fn merge_match_details(existing: MatchDetails, incoming: MatchDetails) -> Ma
             home_stats: new_home_stats.or(old_home_stats),
             away_stats: new_away_stats.or(old_away_stats),
         },
+        (
+            MatchDetails::Cs2 {
+                best_of: old_best_of,
+                tournament_name: old_tournament_name,
+                tournament_tier: old_tournament_tier,
+                maps: old_maps,
+                home_roster: old_home_roster,
+                away_roster: old_away_roster,
+                player_stats: old_player_stats,
+                veto: old_veto,
+            },
+            MatchDetails::Cs2 {
+                best_of: new_best_of,
+                tournament_name: new_tournament_name,
+                tournament_tier: new_tournament_tier,
+                maps: new_maps,
+                home_roster: new_home_roster,
+                away_roster: new_away_roster,
+                player_stats: new_player_stats,
+                veto: new_veto,
+            },
+        ) => {
+            let existing_has_stats = !old_player_stats.is_empty();
+            let incoming_has_stats = !new_player_stats.is_empty();
+            MatchDetails::Cs2 {
+                best_of: new_best_of.or(old_best_of),
+                tournament_name: new_tournament_name.or(old_tournament_name),
+                tournament_tier: new_tournament_tier.or(old_tournament_tier),
+                maps: merge_cs2_maps(old_maps, new_maps),
+                home_roster: merge_cs2_rosters(
+                    old_home_roster,
+                    new_home_roster,
+                    existing_has_stats,
+                    incoming_has_stats,
+                ),
+                away_roster: merge_cs2_rosters(
+                    old_away_roster,
+                    new_away_roster,
+                    existing_has_stats,
+                    incoming_has_stats,
+                ),
+                player_stats: if new_player_stats.is_empty() {
+                    old_player_stats
+                } else {
+                    new_player_stats
+                },
+                veto: if new_veto.is_empty() {
+                    old_veto
+                } else {
+                    new_veto
+                },
+            }
+        }
         (_, incoming) => incoming,
     }
 }
@@ -367,7 +467,16 @@ fn flip_winner(winner: Option<&str>) -> Option<String> {
     })
 }
 
-/// Zamienia statystyki i punkty kwart między gospodarzem a gościem (mecze na terenie neutralnym).
+fn flip_side_label(side: &str) -> String {
+    match side {
+        "HOME" => "AWAY".to_string(),
+        "AWAY" => "HOME".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Zamienia statystyki, mapy, składy i punkty kwart między gospodarzem a gościem
+/// (mecze na terenie neutralnym lub odwrotna kolejność stron w CS2).
 fn flip_details_sides(details: MatchDetails) -> MatchDetails {
     match details {
         MatchDetails::Basketball {
@@ -382,6 +491,45 @@ fn flip_details_sides(details: MatchDetails) -> MatchDetails {
             season_type,
             home_stats: away_stats,
             away_stats: home_stats,
+        },
+        MatchDetails::Cs2 {
+            best_of,
+            tournament_name,
+            tournament_tier,
+            maps,
+            home_roster,
+            away_roster,
+            player_stats,
+            veto,
+        } => MatchDetails::Cs2 {
+            best_of,
+            tournament_name,
+            tournament_tier,
+            maps: maps
+                .into_iter()
+                .map(|m| Cs2MapResult {
+                    map_name: m.map_name,
+                    home_score: m.away_score,
+                    away_score: m.home_score,
+                    winner: flip_winner(m.winner.as_deref()),
+                })
+                .collect(),
+            home_roster: away_roster,
+            away_roster: home_roster,
+            player_stats: player_stats
+                .into_iter()
+                .map(|mut s| {
+                    s.team_side = flip_side_label(&s.team_side);
+                    s
+                })
+                .collect(),
+            veto: veto
+                .into_iter()
+                .map(|mut v| {
+                    v.team_side = flip_side_label(&v.team_side);
+                    v
+                })
+                .collect(),
         },
         other => other,
     }
@@ -419,7 +567,8 @@ pub fn select_matching_row(
         }
 
         let same_sides = cand.home_participant_id == home_id && cand.away_participant_id == away_id;
-        let swapped = incoming.sport == "BASKETBALL"
+        // W koszykówce (mecze neutralne) oraz CS2 kolejność drużyn w źródłach może być odwrócona.
+        let swapped = matches!(incoming.sport, "BASKETBALL" | "CS2")
             && cand.home_participant_id == away_id
             && cand.away_participant_id == home_id;
         if !same_sides && !swapped {
@@ -654,7 +803,7 @@ pub async fn store_matches(db: &PgPool, items: &[IngestedMatch]) -> AppResult<us
             .bind(m.match_date)
             .bind(home_id)
             .bind(away_id)
-            .bind(m.sport == "BASKETBALL")
+            .bind(matches!(m.sport, "BASKETBALL" | "CS2"))
             .fetch_all(&mut *tx)
             .await?;
 
@@ -767,15 +916,16 @@ async fn upsert_participant(
     Ok(id)
 }
 
-/// Importuje wskazaną dyscyplinę (`football`, `basketball`, `tennis`).
+/// Importuje wskazaną dyscyplinę (`football`, `basketball`, `tennis`, `cs2`).
 /// `include_history` dodatkowo pobiera sezony historyczne.
 pub async fn run_sport(state: &AppState, sport: &str, include_history: bool) -> AppResult<usize> {
     match sport {
         "football" => football::sync(state, include_history).await,
         "basketball" => basketball::sync(state, include_history).await,
         "tennis" => tennis::sync(state, include_history).await,
+        "cs2" => cs2::sync(state, include_history).await,
         other => Err(AppError::BadRequest(format!(
-            "Nieznana dyscyplina '{}' (dozwolone: football, basketball, tennis)",
+            "Nieznana dyscyplina '{}' (dozwolone: football, basketball, tennis, cs2)",
             other
         ))),
     }

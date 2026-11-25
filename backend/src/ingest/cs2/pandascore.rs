@@ -380,13 +380,19 @@ async fn fetch_paginated_matches(
     Ok(raw_matches)
 }
 
+/// Buduje parametr `range[begin_at]` w formacie ISO 8601 UTC z sufiksem `Z` (bez `+00:00` i nanosekund,
+/// ponieważ niezakodowane `+` w query stringu PandaScore traktuje jako spację i zwraca `400 Bad Request`).
+pub fn build_pandascore_past_range(now: DateTime<Utc>) -> String {
+    let start = (now - Duration::days(PANDASCORE_PAST_WINDOW_DAYS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let end = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    format!("range[begin_at]={start},{end}")
+}
+
 /// Pobiera terminarz, mecze na żywo oraz zakończone z ostatnich 14 dni z PandaScore Free.
 pub async fn sync_pandascore(state: &AppState, api_key: &str) -> AppResult<usize> {
     let auth_header = format!("Bearer {api_key}");
-    let now = Utc::now();
-    let window_start = (now - Duration::days(PANDASCORE_PAST_WINDOW_DAYS)).to_rfc3339();
-    let window_end = now.to_rfc3339();
-    let past_range = format!("range[begin_at]={window_start},{window_end}");
+    let past_range = build_pandascore_past_range(Utc::now());
 
     let mut all_raw = Vec::new();
     for (endpoint, extra_query) in [

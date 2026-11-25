@@ -11,3 +11,8 @@ local/
 .env
 .env.*
 !.env.example
+
+# LOGI
+logs/
+*.log
+*.log.*

@@ -93,6 +93,7 @@ backend/
 │   ├── ingest_basketball.rs
 │   ├── ingest_football.rs
 │   ├── ingest_tennis.rs
+│   ├── logging.rs
 │   ├── openapi.rs
 │   ├── predictions.rs
 │   └── settlement.rs
@@ -342,6 +343,9 @@ Wszystkie ustawienia aplikacji wczytywane są w `src/config.rs` (oraz w `src/mai
 | `HOST` | Nie | `0.0.0.0` | Adres nasłuchu serwera Axum |
 | `PORT` | Nie | `3000` | Port serwera HTTP/WS |
 | `RUST_LOG` | Nie | `backend=debug,tower_http=info,sqlx=warn` | Poziom logowania (`tracing`); w `docker-compose.yml` ustawiana na `info` |
+| `LOG_TO_FILE` | Nie | `false` | Włącza jednoczesny zapis logów do dziennych plików `backend.log.YYYY-MM-DD` (`true`/`1`/`yes`) |
+| `LOG_DIR` | Nie | `logs` | Katalog na pliki logów (w `docker-compose.yml` mapowany wolumenem `./logs:/app/logs`) |
+| `LOG_MAX_FILES` | Nie | `14` | Maksymalna liczba przechowywanych dziennych plików logów (`0` = bez limitu) |
 | `BACKEND_IMAGE_TAG` | Nie *(Docker Compose)* | `dev` | Tag obrazu backendu pobieranego w `docker-compose.yml` (`ghcr.io/adam-kulwicki/bankrut-backend:${BACKEND_IMAGE_TAG:-dev}`) |
 | `FOOTBALL_DATA_API_KEY` | Nie | `None` | Klucz do Football-Data.org (opcjonalne uzupełnienie bieżącego sezonu piłki nożnej o `utcDate`, kolejki i statusy `LIVE`; pusta wartość traktowana jako `None`) |
 | `BALLDONTLIE_API_KEY` | Nie | `None` | Klucz do BALLDONTLIE (terminarz, kwarty, dokładny `datetime` UTC NBA oraz fallback historii; pusta wartość z `.env` traktowana jako `None`) |

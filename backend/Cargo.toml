@@ -19,3 +19,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 utoipa = { version = "6", features = ["axum_extras", "chrono", "decimal_float"] }
 utoipa-swagger-ui = { version = "10", features = ["axum", "vendored"] }
+zip = { version = "9.8", default-features = false, features = ["deflate"] }

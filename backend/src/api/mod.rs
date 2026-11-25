@@ -1,6 +1,8 @@
 // src/api/mod.rs
 //! Warstwa REST API (`/api/v1/...`) – składa routery poszczególnych zasobów.
 pub mod agents;
+pub mod docs;
+pub mod health;
 pub mod ingest;
 pub mod matches;
 pub mod predictions;

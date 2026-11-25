@@ -72,8 +72,8 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, agent: Agent) {
     // (w najgorszym razie okazja przyjdzie dwa razy).
     let mut rx = state.ws_tx.subscribe();
 
-    // 1. Powitanie (świeże saldo z bazy)
-    let bankroll = betting_exchange::get_bankroll(&state.db, agent_id)
+    // 1. Powitanie (świeże saldo – w trakcie backtestu saldo wirtualnego portfela)
+    let bankroll = betting_exchange::get_ws_bankroll(&state, agent_id)
         .await
         .unwrap_or(agent.current_bankroll);
     let welcome = ServerMessage::Welcome {
@@ -173,7 +173,7 @@ async fn handle_command(state: &AppState, agent_id: i32, raw: &str) -> ServerMes
                             err
                         );
                     }
-                    let bankroll = betting_exchange::get_bankroll(&state.db, agent_id)
+                    let bankroll = betting_exchange::get_ws_bankroll(state, agent_id)
                         .await
                         .unwrap_or_default();
                     ServerMessage::BetResult {
@@ -186,7 +186,7 @@ async fn handle_command(state: &AppState, agent_id: i32, raw: &str) -> ServerMes
             }
         }
         AgentCommand::GetBankroll => {
-            match betting_exchange::get_bankroll(&state.db, agent_id).await {
+            match betting_exchange::get_ws_bankroll(state, agent_id).await {
                 Ok(current_bankroll) => ServerMessage::Bankroll { current_bankroll },
                 Err(err) => ServerMessage::Error {
                     code: "INTERNAL_ERROR".to_string(),

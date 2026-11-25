@@ -1,11 +1,9 @@
 // src/main.rs
 //! Punkt wejścia: konfiguracja, baza danych, migracje i start serwera Axum.
 
-use axum::{extract::State, routing::get, Json, Router};
-use backend::{api, config, error, ingest, state, ws};
-use config::Config;
-use error::AppResult;
-use serde_json::{json, Value};
+use axum::{routing::get, Router};
+use backend::{api, config, ingest, state, ws};
+use config::{Config, LogConfig};
 use sqlx::postgres::PgPoolOptions;
 use state::AppState;
 use std::time::Duration;
@@ -19,13 +17,51 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Logowanie: poziom domyślny jest ustawiony w kodzie, a zmienna `RUST_LOG` go nadpisuje.
+    // Opcjonalnie zapisujemy również do dziennych plików `backend.log.YYYY-MM-DD` (LOG_TO_FILE=true).
+    let log_cfg = LogConfig::from_env();
+    let mut _file_guard = None;
+    let mut file_log_error = None;
+    let file_layer = if log_cfg.to_file {
+        match log_cfg.build_file_appender() {
+            Ok(appender) => {
+                let (non_blocking, guard) = tracing_appender::non_blocking(appender);
+                _file_guard = Some(guard);
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_ansi(false)
+                        .with_writer(non_blocking),
+                )
+            }
+            Err(err) => {
+                file_log_error = Some(err.to_string());
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "backend=debug,tower_http=info,sqlx=warn".into()),
         )
         .with(tracing_subscriber::fmt::layer())
+        .with(file_layer)
         .init();
+
+    if let Some(err) = file_log_error {
+        tracing::warn!(
+            dir = %log_cfg.dir,
+            "Nie udało się włączyć logowania do pliku – używam tylko stdout: {err}"
+        );
+    } else if log_cfg.to_file {
+        tracing::info!(
+            dir = %log_cfg.dir,
+            max_files = ?log_cfg.max_files,
+            "Włączono logowanie do dziennych plików backend.log.YYYY-MM-DD"
+        );
+    }
 
     tracing::info!("Startowanie serwisu Backend (Rust/Axum)...");
 
@@ -67,32 +103,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // 7. Główny router: diagnostyka, REST API pod `/api/v1` i WebSocket pod `/ws`.
+    // 7. Główny router: diagnostyka, REST API pod `/api/v1`, WebSocket pod `/ws` i OpenAPI pod `/docs`.
     let app = Router::new()
-        .route("/health", get(health_check))
+        .route("/health", get(api::health::health_check))
         .nest("/api/v1", api::router())
         .nest("/ws", ws::router())
+        .with_state(app_state)
+        .merge(api::docs::swagger_ui())
         .layer(TraceLayer::new_for_http())
-        .layer(cors)
-        .with_state(app_state);
+        .layer(cors);
 
     // 8. Nasłuch na adresie z konfiguracji (domyślnie `0.0.0.0:3000`, dostępny dla innych kontenerów).
     let listener = TcpListener::bind(&bind_addr).await?;
     tracing::info!("Serwer nasłuchuje na http://{}", bind_addr);
+    tracing::info!(
+        "Dokumentacja OpenAPI (Swagger UI): http://{}/docs",
+        bind_addr
+    );
 
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-/// GET /health – sprawdza połączenie z bazą i zwraca liczbę subskrybentów kanału WebSocket.
-async fn health_check(State(state): State<AppState>) -> AppResult<Json<Value>> {
-    // Proste zapytanie `SELECT 1` wystarcza, aby potwierdzić, że baza odpowiada.
-    sqlx::query("SELECT 1").execute(&state.db).await?;
-
-    Ok(Json(json!({
-        "status": "ok",
-        "database": "connected",
-        "connected_ws_agents": state.ws_tx.receiver_count(),
-    })))
 }

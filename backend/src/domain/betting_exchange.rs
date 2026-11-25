@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 use sqlx::{FromRow, PgPool};
 
 use crate::{
+    domain::backtester::{BacktestAgentSeed, VirtualBet},
     error::{AppError, AppResult},
     models::bet::Bet,
     state::AppState,
@@ -41,10 +42,17 @@ impl Selection {
     }
 }
 
+/// Zapisany kupon – produkcyjny w bazie albo wirtualny w sesji backtestu.
+#[derive(Debug, Clone)]
+pub enum PlacedBetRecord {
+    Live(Bet),
+    Backtest(VirtualBet),
+}
+
 /// Wynik pomyślnie przyjętego zakładu.
 #[derive(Debug, Clone)]
 pub struct PlacedBet {
-    pub bet: Bet,
+    pub bet: PlacedBetRecord,
     pub new_bankroll: Decimal,
 }
 
@@ -98,11 +106,73 @@ pub fn expected_value(prob: Decimal, odds: Decimal) -> Decimal {
     (prob * odds - Decimal::ONE).round_dp(4)
 }
 
-/// Przyjmuje zakład agenta w jednej transakcji bazodanowej:
-///
-/// 1. blokuje wiersz agenta (`SELECT ... FOR UPDATE`) – serializuje zakłady jednego portfela,
-/// 2. weryfikuje mecz (status, czas rozpoczęcia, dostępność kursu),
-/// 3. odejmuje stawkę od salda, zapisuje kupon z kursem z chwili obstawienia.
+#[derive(Debug, FromRow)]
+struct ActiveAgentSeedRow {
+    id: i32,
+    name: String,
+    strategy_description: Option<String>,
+    initial_bankroll: Decimal,
+    is_active: bool,
+}
+
+async fn fetch_active_agent_seed(db: &PgPool, agent_id: i32) -> AppResult<BacktestAgentSeed> {
+    let row = sqlx::query_as::<_, ActiveAgentSeedRow>(
+        "SELECT id, name, strategy_description, initial_bankroll, is_active FROM agents WHERE id = $1",
+    )
+    .bind(agent_id)
+    .fetch_optional(db)
+    .await?
+    .ok_or_else(|| AppError::NotFound(format!("Agent o ID {} nie istnieje", agent_id)))?;
+
+    if !row.is_active {
+        return Err(AppError::BetRejected("konto agenta jest nieaktywne".into()));
+    }
+
+    Ok(BacktestAgentSeed {
+        id: row.id,
+        name: row.name,
+        strategy_description: row.strategy_description,
+        initial_bankroll: row.initial_bankroll,
+    })
+}
+
+async fn place_backtest_bet(
+    state: &AppState,
+    agent_id: i32,
+    match_id: i32,
+    selection: Selection,
+    stake: Decimal,
+    reasoning: Option<String>,
+) -> AppResult<PlacedBet> {
+    if !state.backtest.has_wallet(agent_id).await {
+        let seed = fetch_active_agent_seed(&state.db, agent_id).await?;
+        state.backtest.ensure_wallet(seed).await;
+    }
+
+    let (vbet, new_bankroll) = state
+        .backtest
+        .place_bet(agent_id, match_id, selection, stake, reasoning)
+        .await?;
+
+    tracing::info!(
+        agent_id,
+        match_id,
+        selection = selection.as_str(),
+        %stake,
+        odds = %vbet.odds_taken,
+        backtest = true,
+        "Zakład wirtualny (backtest) przyjęty"
+    );
+
+    Ok(PlacedBet {
+        bet: PlacedBetRecord::Backtest(vbet),
+        new_bankroll,
+    })
+}
+
+/// Przyjmuje zakład agenta:
+/// * dla otwartego meczu backtestu — w izolowanym wirtualnym portfelu w pamięci (`BacktestStore`),
+/// * w trybie produkcyjnym — w transakcji PostgreSQL z blokadą `SELECT ... FOR UPDATE`.
 pub async fn place_bet(
     state: &AppState,
     agent_id: i32,
@@ -122,7 +192,9 @@ pub async fn place_bet(
         ));
     }
 
-    let backtest_open = state.open_backtest_matches.read().await.contains(&match_id);
+    if state.backtest.is_match_open(match_id).await {
+        return place_backtest_bet(state, agent_id, match_id, selection, stake, reasoning).await;
+    }
 
     let mut tx = state.db.begin().await?;
 
@@ -153,7 +225,7 @@ pub async fn place_bet(
     .await?
     .ok_or_else(|| AppError::NotFound(format!("Mecz o ID {} nie istnieje", match_id)))?;
 
-    check_bettable(&m.status, m.match_date, Utc::now(), backtest_open)?;
+    check_bettable(&m.status, m.match_date, Utc::now(), false)?;
 
     let odds = match selection {
         Selection::Home => m.odds_home,
@@ -240,10 +312,13 @@ pub async fn place_bet(
         "Zakład przyjęty"
     );
 
-    Ok(PlacedBet { bet, new_bankroll })
+    Ok(PlacedBet {
+        bet: PlacedBetRecord::Live(bet),
+        new_bankroll,
+    })
 }
 
-/// Aktualne saldo portfela agenta.
+/// Aktualne produkcyjne saldo portfela agenta w bazie danych.
 pub async fn get_bankroll(db: &PgPool, agent_id: i32) -> AppResult<Decimal> {
     let (bankroll,): (Decimal,) =
         sqlx::query_as("SELECT current_bankroll FROM agents WHERE id = $1")
@@ -252,4 +327,19 @@ pub async fn get_bankroll(db: &PgPool, agent_id: i32) -> AppResult<Decimal> {
             .await?
             .ok_or_else(|| AppError::NotFound(format!("Agent o ID {} nie istnieje", agent_id)))?;
     Ok(bankroll)
+}
+
+/// Aktualne saldo agenta z perspektywy WebSocketu: podczas trwającego backtestu
+/// zwraca saldo jego wirtualnego portfela, a poza nim saldo produkcyjne z bazy.
+pub async fn get_ws_bankroll(state: &AppState, agent_id: i32) -> AppResult<Decimal> {
+    if state.backtest.is_running() {
+        if let Some(bankroll) = state.backtest.get_bankroll(agent_id).await {
+            return Ok(bankroll);
+        }
+        let seed = fetch_active_agent_seed(&state.db, agent_id).await?;
+        if let Some(bankroll) = state.backtest.ensure_wallet(seed).await {
+            return Ok(bankroll);
+        }
+    }
+    get_bankroll(&state.db, agent_id).await
 }

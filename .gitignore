@@ -5,7 +5,21 @@
 .idea/
 *.iml
 .vscode/
+local/
 
 # PLIKI ENV
 .env
 .env.*
+!.env.example
+
+# LOGI
+logs/
+*.log
+*.log.*
+
+# DANE
+data/
+
+# KODY BAJTOWE PYTHONA
+__pycache__/
+*.py[cod]

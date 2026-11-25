@@ -3,6 +3,11 @@ FROM rust:1-slim-bookworm AS builder
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # 1. Kopiujemy manifesty zależności, żeby pobrać je i zacache'ować
 COPY Cargo.toml Cargo.lock ./
 
@@ -25,9 +30,10 @@ FROM debian:bookworm-slim
 
 WORKDIR /app
 
-# Instalujemy tylko ca-certificates (potrzebne dla reqwest do łączenia się po HTTPS z API sportowymi)
+# Instalujemy ca-certificates oraz libssl3 (wymagane przez native-tls/OpenSSL dla reqwest)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Kopiujemy skompilowaną binarkę (dla name = "backend" w Cargo.toml)

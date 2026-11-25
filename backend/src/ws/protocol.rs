@@ -6,6 +6,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::domain::backtester::BacktestLeaderboardEntry;
+
 /// Skrót predykcji jednego modelu dołączany do `MATCH_OPPORTUNITY`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelPredictionSummary {
@@ -58,16 +60,20 @@ pub enum ServerMessage {
     Bankroll { current_bankroll: Decimal },
     /// Początek symulacji historycznej (backtestu).
     BacktestStarted {
+        run_id: u64,
         season: String,
         sport: Option<String>,
         total_matches: usize,
         total_days: usize,
+        initial_bankroll: Option<Decimal>,
     },
     /// Koniec symulacji historycznej (backtestu).
     BacktestFinished {
+        run_id: u64,
         season: String,
         total_matches: usize,
         settled_bets: usize,
+        leaderboard: Vec<BacktestLeaderboardEntry>,
     },
     /// Błąd protokołu, np. niepoprawny JSON komendy.
     Error { code: String, message: String },

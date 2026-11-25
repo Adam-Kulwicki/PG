@@ -1,0 +1,31 @@
+name: Backend Check
+
+on:
+  pull_request:
+    branches: [ prod, dev ]
+    paths: [ 'backend/**', '.github/workflows/backend-check.yml', '.github/workflows/backend-build.yml' ]
+  workflow_call:
+
+concurrency:
+  group: backend-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/prod' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./backend -> target"
+      - name: Format, Clippy & Test
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --locked

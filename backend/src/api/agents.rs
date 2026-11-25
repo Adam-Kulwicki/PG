@@ -10,6 +10,7 @@ use axum::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use utoipa::ToSchema;
 
 use crate::{
     error::{AppError, AppResult},
@@ -26,7 +27,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Payload rejestracji agenta (POST /api/v1/agents).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateAgentDto {
     pub name: String,
     pub api_key: String,
@@ -35,7 +36,7 @@ pub struct CreateAgentDto {
 }
 
 /// Odpowiedź po rejestracji – jedyny moment, w którym `api_key` wraca w odpowiedzi API.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct AgentCreatedResponse {
     pub id: i32,
     pub name: String,
@@ -44,7 +45,7 @@ pub struct AgentCreatedResponse {
 }
 
 /// Wiersz rankingu: saldo, zysk, ROI % oraz statystyki zakładów agenta.
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, ToSchema)]
 pub struct LeaderboardEntryDto {
     pub id: i32,
     pub name: String,
@@ -58,7 +59,16 @@ pub struct LeaderboardEntryDto {
 }
 
 /// GET /api/v1/agents – lista zarejestrowanych agentów (bez kluczy API).
-async fn list_agents(State(state): State<AppState>) -> AppResult<Json<Vec<Agent>>> {
+#[utoipa::path(
+    get,
+    path = "/api/v1/agents",
+    tag = "Agents",
+    responses(
+        (status = 200, description = "Lista zarejestrowanych agentów", body = [Agent]),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn list_agents(State(state): State<AppState>) -> AppResult<Json<Vec<Agent>>> {
     let agents = sqlx::query_as::<_, Agent>("SELECT * FROM agents ORDER BY id ASC")
         .fetch_all(&state.db)
         .await?;
@@ -67,7 +77,18 @@ async fn list_agents(State(state): State<AppState>) -> AppResult<Json<Vec<Agent>
 }
 
 /// POST /api/v1/agents – rejestruje agenta z podanym kapitałem początkowym (domyślnie 1000).
-async fn register_agent(
+#[utoipa::path(
+    post,
+    path = "/api/v1/agents",
+    tag = "Agents",
+    request_body = CreateAgentDto,
+    responses(
+        (status = 201, description = "Agent utworzony pomyślnie", body = AgentCreatedResponse),
+        (status = 400, description = "Niepoprawne dane rejestracji", body = crate::error::ErrorResponse),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn register_agent(
     State(state): State<AppState>,
     Json(payload): Json<CreateAgentDto>,
 ) -> AppResult<(StatusCode, Json<AgentCreatedResponse>)> {
@@ -109,7 +130,16 @@ async fn register_agent(
 }
 
 /// GET /api/v1/agents/leaderboard – ranking agentów według aktualnego salda.
-async fn get_leaderboard(
+#[utoipa::path(
+    get,
+    path = "/api/v1/agents/leaderboard",
+    tag = "Agents",
+    responses(
+        (status = 200, description = "Ranking agentów posortowany wg salda", body = [LeaderboardEntryDto]),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn get_leaderboard(
     State(state): State<AppState>,
 ) -> AppResult<Json<Vec<LeaderboardEntryDto>>> {
     // ROI = zysk / kapitał początkowy * 100; NULLIF chroni przed dzieleniem przez zero.
@@ -139,7 +169,19 @@ async fn get_leaderboard(
 }
 
 /// GET /api/v1/agents/{id}/bets – historia zakładów agenta, od najnowszych.
-async fn get_agent_bets(
+#[utoipa::path(
+    get,
+    path = "/api/v1/agents/{id}/bets",
+    tag = "Agents",
+    params(
+        ("id" = i32, Path, description = "ID agenta")
+    ),
+    responses(
+        (status = 200, description = "Historia zakładów agenta", body = [Bet]),
+        (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
+    )
+)]
+pub async fn get_agent_bets(
     State(state): State<AppState>,
     Path(agent_id): Path<i32>,
 ) -> AppResult<Json<Vec<Bet>>> {

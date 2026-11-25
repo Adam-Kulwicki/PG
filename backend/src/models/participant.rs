@@ -10,11 +10,11 @@ use sqlx::{types::Json, FromRow};
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Competition {
     pub id: i32,
-    /// "FOOTBALL", "BASKETBALL" lub "TENNIS".
+    /// "FOOTBALL", "BASKETBALL", "TENNIS" lub "CS2".
     pub sport: String,
     pub name: String,
     pub country_or_category: Option<String>,
-    /// Unikalny kod używany przy imporcie danych, np. "PL", "NBA", "ATP".
+    /// Unikalny kod używany przy imporcie danych, np. "PL", "NBA", "ATP", "CS2".
     pub external_code: String,
     pub created_at: DateTime<Utc>,
 }

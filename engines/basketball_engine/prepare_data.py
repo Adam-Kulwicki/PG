@@ -1,5 +1,6 @@
 import time
 import pandas as pd
+import numpy as np
 from nba_api.stats.endpoints import teamgamelogs, leaguedashplayerstats
 
 BASE_SIM_COLS = [
@@ -93,7 +94,7 @@ def fetch_player_ratings(season: str = "2026-27") -> pd.DataFrame:
     df = df[cols].copy()
 
     # Pomijamy osoby, które rozegrały osoby "3 świetne minuty" aby nie zanieczyścić danych
-    # Aby osoba liczyła się do danych musi mięc rozegrane 5 gry i co najmniej 10 minut
+    # Aby osoba liczyła się do danych musi mięc rozegrane 3 gry i co najmniej 10 minut
     small_sample = (df["MIN"] < 10.0) | (df["GP"] < 3)
     df.loc[small_sample, "PIE"] = df.loc[small_sample, "PIE"].clip(upper=0.10)
 
@@ -300,10 +301,92 @@ def prepare_training_data(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], di
     return games, feature_cols, current_elo
 
 
+def build_matchup_features(
+    df: pd.DataFrame,
+    current_elo: dict,
+    home_team: str,
+    away_team: str,
+    players_df: pd.DataFrame | None = None,
+    missing_home: list[str] | None = None,
+    missing_away: list[str] | None = None,
+    match_date: str | pd.Timestamp | None = None,
+) -> tuple[pd.Series, dict[str, np.ndarray]]:
+    # Zmeiniamy na typ danych na datę i normalizujemy
+    target_date = (
+        pd.to_datetime(match_date) if match_date else pd.Timestamp.today().normalize()
+    )
+    teams = {home_team.upper(), away_team.upper()}
+
+    # Filtrujemy od razu 2 drużyny zamiast kopiować i parsować całą tabelę
+    sub_df = df[df["TEAM_ABBREVIATION"].isin(teams)].copy()
+    sub_df["GAME_DATE"] = pd.to_datetime(sub_df["GAME_DATE"])
+
+    # Bierzemy mecze przed datą meczu aby uniknąć wycieku danych
+    sub_df = sub_df[sub_df["GAME_DATE"] < target_date].sort_values("GAME_DATE")
+
+    features = {}
+    cov_matrices = {}
+
+    # Wyliczamy cechy dla gości i gospodarzy
+    for team, suffix, missing in [
+        (home_team.upper(), "HOME", missing_home),
+        (away_team.upper(), "AWAY", missing_away),
+    ]:
+        team_df = sub_df[sub_df["TEAM_ABBREVIATION"] == team]
+        # Żeby mieć średnie korczące z 15 meczy to tyle meczy musi się odbyć
+        if len(team_df) < 15:
+            raise ValueError(f"Za mało danych historycznych dla drużyny: {team}")
+
+        # Liczymy dni przerwy do meczu
+        days_rest = int(
+            np.clip((target_date - team_df["GAME_DATE"].iloc[-1]).days, 1, 7)
+        )
+        features[f"DAYS_REST_{suffix}"] = days_rest
+        # Sprawdzamy czy mecz jest back to back
+        features[f"IS_B2B_{suffix}"] = int(days_rest == 1)
+        # Wyciągamy elo drużyny
+        features[f"ELO_{suffix}"] = current_elo.get(team, 1500.0)
+
+        # Liczymy kary ofensywne i defensywne na podstawie brakujących zawodników
+        off_pen, def_pen = calculate_missing_penalty(players_df, team, missing)
+
+        # Liczymy EWM naraz dla wszystkich kolumn z BASE_SIM_COLS
+        for span, min_p in ((5, 3), (15, 5)):
+            ewm = (
+                team_df[BASE_SIM_COLS].ewm(span=span, min_periods=min_p).mean().iloc[-1]
+            )
+            ewm["OFF_RATING"] += off_pen
+            ewm["DEF_RATING"] += def_pen
+            ewm["NET_RATING"] = ewm["OFF_RATING"] - ewm["DEF_RATING"]
+            features.update(
+                {f"{col}_EWM{span}_{suffix}": float(val) for col, val in ewm.items()}
+            )
+        # Uzupełniamy macierze kowariancji potrzebne do metody Monte Carlo (TO-DO)
+        # Mnożenie 1e-6 jest po to aby macierz była określona
+        cov = np.nan_to_num(team_df[BASE_SIM_COLS].tail(15).cov().values, nan=0.0)
+        cov_matrices[suffix] = cov + np.eye(len(BASE_SIM_COLS)) * 1e-6
+
+    # Updatejumy nasze features
+    features.update(
+        {
+            "DIFF_ELO": features["ELO_HOME"] - features["ELO_AWAY"],
+            "DIFF_NET_RTG_15": features["NET_RATING_EWM15_HOME"]
+            - features["NET_RATING_EWM15_AWAY"],
+            "DIFF_NET_RTG_5": features["NET_RATING_EWM5_HOME"]
+            - features["NET_RATING_EWM5_AWAY"],
+            "DIFF_REST": features["DAYS_REST_HOME"] - features["DAYS_REST_AWAY"],
+            "EXPECTED_PACE": (features["PACE_EWM15_HOME"] + features["PACE_EWM15_AWAY"])
+            / 2,
+        }
+    )
+    # Zwracamy cechy do predykcji
+    return pd.Series(features), cov_matrices
+
+
 # Póki co sprawdzam na jednym sezonie czy wszystko śmiga
 if __name__ == "__main__":
     df_test = fetch_nba_info(
-        start_year=2024, end_year=2024, season_types=("Regular Season",)
+        start_year=2025, end_year=2025, season_types=("Regular Season",)
     )
     print("Wymiary tabeli:", df_test.shape)
     print(df_test[["GAME_DATE", "MATCHUP", "PTS", "OFF_RATING", "PACE"]].head())
@@ -329,3 +412,18 @@ if __name__ == "__main__":
         f"Brak gracza: {star['PLAYER_NAME']} ({star['TEAM_ABBREVIATION']}, "
         f"PIE = {star['PIE']})"
     )
+
+    feats, covs = build_matchup_features(
+        df=df_test,
+        current_elo=current_elo,
+        home_team="NYK",
+        away_team="SAS",
+        players_df=df2_test,
+        match_date="2026-06-03",
+    )
+
+    assert set(feats.index) == set(feature_cols), "Niezgodność kolumn!"
+    print("\n(NYK vs SAS)")
+    print("Liczba cech:", len(feats), "| Braki (NaN):", int(feats.isna().sum()))
+    print("Macierz kowariancji HOME:", covs["HOME"].shape)
+    print(feats[["ELO_HOME", "ELO_AWAY", "DIFF_ELO", "DIFF_NET_RTG_15"]].round(2))

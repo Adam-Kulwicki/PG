@@ -15,6 +15,9 @@ use crate::{
     state::AppState,
 };
 
+/// Bazowy adres REST API PandaScore dla wspólnych zasobów turniejowych (bez prefiksu gry).
+const PANDASCORE_ROOT_API_URL: &str = "https://api.pandascore.co";
+
 /// Bazowy adres REST API PandaScore dla Counter-Strike 2 (historyczny prefiks `/csgo`).
 const PANDASCORE_API_BASE_URL: &str = "https://api.pandascore.co/csgo";
 
@@ -176,7 +179,7 @@ fn format_tournament_name(m: &PandaScoreMatch) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" — "))
 }
 
-/// Parsuje odpowiedź `/csgo/tournaments/{id}/rosters` na mapę `team_id -> Vec<Cs2Player>`.
+/// Parsuje odpowiedź `/tournaments/{id}/rosters` na mapę `team_id -> Vec<Cs2Player>`.
 pub fn parse_pandascore_tournament_rosters(
     json_body: &str,
 ) -> AppResult<HashMap<i64, Vec<Cs2Player>>> {
@@ -418,7 +421,7 @@ pub async fn sync_pandascore(state: &AppState, api_key: &str) -> AppResult<usize
 
     let mut rosters_by_team: HashMap<i64, Vec<Cs2Player>> = HashMap::new();
     for tournament_id in tournament_ids {
-        let url = format!("{PANDASCORE_API_BASE_URL}/tournaments/{tournament_id}/rosters");
+        let url = format!("{PANDASCORE_ROOT_API_URL}/tournaments/{tournament_id}/rosters");
         match fetch_text(&state.http_client, &url, &[("Authorization", &auth_header)]).await {
             Ok(body) => match parse_pandascore_tournament_rosters(&body) {
                 Ok(parsed) => rosters_by_team.extend(parsed),

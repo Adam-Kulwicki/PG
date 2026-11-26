@@ -306,6 +306,11 @@ fn normalizes_top5_teams_leagues_and_source_config() {
     assert_eq!(clubelo_slug("ES Troyes AC"), Some("Troyes"));
     assert_eq!(clubelo_slug("Lille OSC"), Some("Lille"));
     assert_eq!(
+        clubelo_slug("US Salernitana 1919"),
+        Some("us-salernitana-1919")
+    );
+    assert_eq!(clubelo_slug("Pisa SC"), Some("pisa-sc"));
+    assert_eq!(
         normalize_football_team_name("Bayern Munich"),
         "FC Bayern München"
     );

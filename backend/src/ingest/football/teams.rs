@@ -688,7 +688,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "US Salernitana 1919",
-        clubelo: "Salernitana",
+        clubelo: "us-salernitana-1919",
         aliases: &["Salernitana"],
     },
     TeamEntry {
@@ -768,7 +768,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Pisa SC",
-        clubelo: "Pisa",
+        clubelo: "pisa-sc",
         aliases: &["Pisa"],
     },
     // --- Ligue 1 (FL1 / FRA) ---

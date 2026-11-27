@@ -2,11 +2,11 @@
 //! Współdzielony stan aplikacji udostępniany każdemu handlerowi Axum.
 
 use crate::config::Config;
+use crate::domain::backtester::BacktestStore;
 use crate::ws::protocol::WsEnvelope;
 use sqlx::PgPool;
-use std::collections::HashSet;
-use std::sync::{atomic::AtomicBool, Arc};
-use tokio::sync::{broadcast, RwLock};
+use std::sync::Arc;
+use tokio::sync::broadcast;
 
 /// Stan klonowany do każdego handlera (wszystkie pola są tanie w klonowaniu).
 #[derive(Clone)]
@@ -21,11 +21,8 @@ pub struct AppState {
     pub nba_stats_client: reqwest::Client,
     /// Kanał broadcast do WebSocket Hub – każde połączenie agenta subskrybuje go przez `subscribe()`.
     pub ws_tx: broadcast::Sender<WsEnvelope>,
-    /// Mecze historyczne (FINISHED), na które agenci mogą w tej chwili obstawiać w ramach
-    /// trwającego backtestu (aktualny "dzień" symulacji). Poza backtestem zbiór jest pusty.
-    pub open_backtest_matches: Arc<RwLock<HashSet<i32>>>,
-    /// Flaga zabezpieczająca przed równoległym uruchomieniem dwóch backtestów.
-    pub backtest_running: Arc<AtomicBool>,
+    /// Izolowany magazyn wirtualnych portfeli i wyników backtestingu (w pamięci serwera).
+    pub backtest: Arc<BacktestStore>,
 }
 
 /// Buduje klienta HTTP dla `stats.nba.com` z opcjonalnym proxy (`NBA_API_PROXY`).
@@ -86,8 +83,7 @@ impl AppState {
             http_client,
             nba_stats_client,
             ws_tx,
-            open_backtest_matches: Arc::new(RwLock::new(HashSet::new())),
-            backtest_running: Arc::new(AtomicBool::new(false)),
+            backtest: Arc::new(BacktestStore::new()),
         }
     }
 }

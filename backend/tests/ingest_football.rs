@@ -293,7 +293,23 @@ fn normalizes_top5_teams_leagues_and_source_config() {
         normalize_football_team_name("Ath Madrid"),
         "Club Atlético de Madrid"
     );
-    assert_eq!(clubelo_slug("Club Atlético de Madrid"), Some("Atletico"));
+    assert_eq!(clubelo_slug("Club Atlético de Madrid"), Some("atletico"));
+    assert_eq!(clubelo_slug("Real Madrid CF"), Some("realmadrid"));
+    assert_eq!(clubelo_slug("RC Celta de Vigo"), Some("rc-celta"));
+    assert_eq!(clubelo_slug("Athletic Club"), Some("athletic-club"));
+    assert_eq!(clubelo_slug("Atalanta BC"), Some("atalanta"));
+    assert_eq!(clubelo_slug("Parma Calcio 1913"), Some("parma-calcio-1913"));
+    assert_eq!(clubelo_slug("Venezia FC"), Some("venezia-fc"));
+    assert_eq!(clubelo_slug("Holstein Kiel"), Some("Holstein"));
+    assert_eq!(clubelo_slug("RC Deportivo La Coruña"), Some("Depor"));
+    assert_eq!(clubelo_slug("Racing Club de Lens"), Some("Lens"));
+    assert_eq!(clubelo_slug("ES Troyes AC"), Some("Troyes"));
+    assert_eq!(clubelo_slug("Lille OSC"), Some("Lille"));
+    assert_eq!(
+        clubelo_slug("US Salernitana 1919"),
+        Some("us-salernitana-1919")
+    );
+    assert_eq!(clubelo_slug("Pisa SC"), Some("pisa-sc"));
     assert_eq!(
         normalize_football_team_name("Bayern Munich"),
         "FC Bayern München"

@@ -4,8 +4,82 @@
 use std::env;
 
 use rust_decimal::Decimal;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use crate::domain::odds::default_bookmaker_margin;
+
+/// Domyślny katalog zapisu dziennych plików logów (`LOG_DIR`).
+pub const DEFAULT_LOG_DIR: &str = "logs";
+
+/// Domyślny limit przechowywanych dziennych plików logów (`LOG_MAX_FILES`).
+pub const DEFAULT_LOG_MAX_FILES: usize = 14;
+
+/// Prefiks nazw plików logów tworzących wzorzec `backend.log.YYYY-MM-DD`.
+pub const LOG_FILE_PREFIX: &str = "backend.log";
+
+/// Ustawienia zapisu logów do dziennych plików (`LOG_TO_FILE`, `LOG_DIR`, `LOG_MAX_FILES`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogConfig {
+    /// Czy zapisywać logi również do plików (`LOG_TO_FILE`, domyślnie `false`).
+    pub to_file: bool,
+    /// Katalog docelowy na pliki logów (`LOG_DIR`, domyślnie `logs`).
+    pub dir: String,
+    /// Maksymalna liczba przechowywanych plików dziennych (`None` = bez limitu przy `0`).
+    pub max_files: Option<usize>,
+}
+
+impl LogConfig {
+    /// Parsuje opcjonalne wartości tekstowe ze środowiska do [`LogConfig`].
+    pub fn parse(to_file: Option<&str>, dir: Option<&str>, max_files: Option<&str>) -> Self {
+        let to_file = to_file
+            .map(str::trim)
+            .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "true" | "1" | "yes"));
+
+        let dir = dir
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or(DEFAULT_LOG_DIR)
+            .to_string();
+
+        let max_files = match max_files.map(str::trim).filter(|v| !v.is_empty()) {
+            Some(raw) => match raw.parse::<usize>() {
+                Ok(0) => None,
+                Ok(n) => Some(n),
+                Err(_) => Some(DEFAULT_LOG_MAX_FILES),
+            },
+            None => Some(DEFAULT_LOG_MAX_FILES),
+        };
+
+        Self {
+            to_file,
+            dir,
+            max_files,
+        }
+    }
+
+    /// Wczytuje konfigurację logowania do pliku ze zmiennych środowiskowych.
+    pub fn from_env() -> Self {
+        Self::parse(
+            env::var("LOG_TO_FILE").ok().as_deref(),
+            env::var("LOG_DIR").ok().as_deref(),
+            env::var("LOG_MAX_FILES").ok().as_deref(),
+        )
+    }
+
+    /// Tworzy katalog `dir` i buduje dzienny appender `backend.log.YYYY-MM-DD`.
+    pub fn build_file_appender(
+        &self,
+    ) -> Result<RollingFileAppender, Box<dyn std::error::Error + Send + Sync>> {
+        std::fs::create_dir_all(&self.dir)?;
+        let mut builder = RollingFileAppender::builder()
+            .rotation(Rotation::DAILY)
+            .filename_prefix(LOG_FILE_PREFIX);
+        if let Some(limit) = self.max_files {
+            builder = builder.max_log_files(limit);
+        }
+        Ok(builder.build(&self.dir)?)
+    }
+}
 
 /// Źródło danych piłki nożnej wybierane zmienną `INGEST_FOOTBALL_SOURCE`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,6 +142,10 @@ pub struct Config {
     pub football_data_api_key: Option<String>,
     /// Klucz do BALLDONTLIE (opcjonalny – służy do terminarza, kwart, dokładnego `datetime` UTC i fallbacku historii).
     pub balldontlie_api_key: Option<String>,
+    /// Klucz Bearer do PandaScore Free (`/csgo/*` dla CS2; opcjonalny).
+    pub pandascore_api_key: Option<String>,
+    /// Token dostępu Kaggle (`KAGGLE_API_TOKEN`, np. `KGAT_...`; opcjonalny).
+    pub kaggle_api_token: Option<String>,
     /// Czy uruchamiać cykliczny import danych sportowych (`INGEST_ENABLED`, domyślnie `true`).
     pub ingest_enabled: bool,
     /// Co ile minut powtarzać import bieżących danych (`INGEST_INTERVAL_MINUTES`, domyślnie 60).
@@ -140,6 +218,8 @@ impl Config {
         // Klucze API są opcjonalne – puste zmienne z `.env` nie udają aktywnego klucza
         let football_data_api_key = env_non_empty("FOOTBALL_DATA_API_KEY");
         let balldontlie_api_key = env_non_empty("BALLDONTLIE_API_KEY");
+        let pandascore_api_key = env_non_empty("PANDASCORE_API_KEY");
+        let kaggle_api_token = env_non_empty("KAGGLE_API_TOKEN");
 
         let ingest_enabled = env::var("INGEST_ENABLED")
             .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "false" | "0" | "no"))
@@ -245,6 +325,8 @@ impl Config {
             port,
             football_data_api_key,
             balldontlie_api_key,
+            pandascore_api_key,
+            kaggle_api_token,
         }
     }
 

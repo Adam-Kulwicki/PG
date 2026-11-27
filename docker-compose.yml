@@ -31,6 +31,9 @@ services:
       RUST_LOG: info
     ports:
       - "3000:3000"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
 
 volumes:
   pgdata:

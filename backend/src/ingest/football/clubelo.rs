@@ -397,6 +397,8 @@ pub async fn enrich_matches_with_clubelo(
           AND c.external_code = ANY($1)
           AND (
               m.match_details->'pre_match_elo' IS NULL
+              OR m.match_details->'pre_match_elo'->>'home_elo' IS NULL
+              OR m.match_details->'pre_match_elo'->>'away_elo' IS NULL
               OR m.status = 'SCHEDULED'
           )
         ORDER BY m.match_date ASC

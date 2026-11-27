@@ -24,6 +24,11 @@ use utoipa_swagger_ui::SwaggerUi;
         crate::api::ingest::trigger_ingest,
         crate::api::simulation::settle,
         crate::api::simulation::backtest,
+        crate::api::simulation::get_latest_backtest,
+        crate::api::simulation::list_backtest_runs,
+        crate::api::simulation::get_backtest_run,
+        crate::api::simulation::get_backtest_leaderboard,
+        crate::api::simulation::get_backtest_bets,
     ),
     components(
         schemas(
@@ -34,6 +39,10 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::models::match_model::FootballTeamStats,
             crate::models::match_model::FootballPreMatchElo,
             crate::models::match_model::BasketballTeamStats,
+            crate::models::match_model::Cs2MapResult,
+            crate::models::match_model::Cs2Player,
+            crate::models::match_model::Cs2PlayerStats,
+            crate::models::match_model::Cs2VetoAction,
             crate::models::bet::Agent,
             crate::api::agents::CreateAgentDto,
             crate::api::agents::AgentCreatedResponse,
@@ -45,6 +54,11 @@ use utoipa_swagger_ui::SwaggerUi;
             crate::api::simulation::SettleResponse,
             crate::domain::backtester::BacktestParams,
             crate::domain::backtester::BacktestPlan,
+            crate::domain::backtester::BacktestStatus,
+            crate::domain::backtester::VirtualBet,
+            crate::domain::backtester::BacktestLeaderboardEntry,
+            crate::domain::backtester::BacktestRunSummary,
+            crate::domain::backtester::BacktestReport,
         )
     ),
     tags(

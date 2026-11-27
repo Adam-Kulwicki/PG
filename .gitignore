@@ -11,3 +11,15 @@ local/
 .env
 .env.*
 !.env.example
+
+# LOGI
+logs/
+*.log
+*.log.*
+
+# DANE
+data/
+
+# KODY BAJTOWE PYTHONA
+__pycache__/
+*.py[cod]

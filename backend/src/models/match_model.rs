@@ -81,6 +81,59 @@ pub struct FootballPreMatchElo {
     pub clubelo_prob_away: Option<f64>,
 }
 
+/// Wynik pojedynczej mapy w serii CS2 (nazwa mapy, punkty rundowe i zwycięzca).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Cs2MapResult {
+    pub map_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_score: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub away_score: Option<i32>,
+    /// "HOME", "AWAY" lub "DRAW" (jeśli mapa zakończona remisem).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub winner: Option<String>,
+}
+
+/// Zawodnik drużyny CS2 zapisany w składzie meczowym lub turniejowym.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Cs2Player {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<i64>,
+    pub name: String,
+}
+
+/// Statystyki indywidualne zawodnika z serii CS2 (źródło pomeczowe, np. Kaggle CSV).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Cs2PlayerStats {
+    /// "HOME" lub "AWAY" (zgodne z kierunkiem stron w rekordzie meczu).
+    pub team_side: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub player_id: Option<i64>,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kills: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deaths: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assists: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adr: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kast: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kddiff: Option<i32>,
+}
+
+/// Pojedynczy krok fazy veto (ban/pick/decider) w meczu CS2 – opcjonalne pod przyszłe wzbogacenie.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Cs2VetoAction {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<u8>,
+    pub team_side: String,
+    pub action: String,
+    pub map_name: String,
+}
+
 /// Szczegóły specyficzne dla dyscypliny, przechowywane w kolumnie JSONB `match_details`.
 /// Wariant rozpoznawany jest po polu `sport_type` (np. `"football"`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -120,6 +173,25 @@ pub enum MatchDetails {
         sets: Vec<(u8, u8)>,
         home_aces: Option<u16>,
         away_aces: Option<u16>,
+    },
+    /// Counter-Strike 2: format serii, turniej, mapy, składy, statystyki graczy oraz opcjonalne veto.
+    Cs2 {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        best_of: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tournament_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tournament_tier: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        maps: Vec<Cs2MapResult>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        home_roster: Vec<Cs2Player>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        away_roster: Vec<Cs2Player>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        player_stats: Vec<Cs2PlayerStats>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        veto: Vec<Cs2VetoAction>,
     },
 }
 

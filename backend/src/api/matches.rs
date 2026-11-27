@@ -30,7 +30,7 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MatchFilter {
-    /// Dyscyplina: "FOOTBALL", "BASKETBALL" lub "TENNIS" (wielkość liter bez znaczenia).
+    /// Dyscyplina: "FOOTBALL", "BASKETBALL", "TENNIS" lub "CS2" (wielkość liter bez znaczenia).
     pub sport: Option<String>,
     /// Status meczu, np. "SCHEDULED" lub "FINISHED".
     pub status: Option<String>,

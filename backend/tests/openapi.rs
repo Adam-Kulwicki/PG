@@ -31,6 +31,14 @@ fn openapi_spec_contains_all_endpoints_and_hides_agent_api_key() {
         ("/api/v1/ingest/{sport}", "post"),
         ("/api/v1/simulation/settle", "post"),
         ("/api/v1/simulation/backtest", "post"),
+        ("/api/v1/simulation/backtest", "get"),
+        ("/api/v1/simulation/backtest/runs", "get"),
+        ("/api/v1/simulation/backtest/runs/{run_id}", "get"),
+        (
+            "/api/v1/simulation/backtest/runs/{run_id}/leaderboard",
+            "get",
+        ),
+        ("/api/v1/simulation/backtest/runs/{run_id}/bets", "get"),
     ];
 
     for (path, method) in expected_operations {
@@ -55,6 +63,10 @@ fn openapi_spec_contains_all_endpoints_and_hides_agent_api_key() {
         "FootballTeamStats",
         "FootballPreMatchElo",
         "BasketballTeamStats",
+        "Cs2MapResult",
+        "Cs2Player",
+        "Cs2PlayerStats",
+        "Cs2VetoAction",
         "Agent",
         "CreateAgentDto",
         "AgentCreatedResponse",
@@ -66,6 +78,11 @@ fn openapi_spec_contains_all_endpoints_and_hides_agent_api_key() {
         "SettleResponse",
         "BacktestParams",
         "BacktestPlan",
+        "BacktestStatus",
+        "VirtualBet",
+        "BacktestLeaderboardEntry",
+        "BacktestRunSummary",
+        "BacktestReport",
     ];
 
     for name in expected_schemas {

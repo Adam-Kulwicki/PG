@@ -4,13 +4,14 @@
 import argparse
 import csv
 from bisect import insort
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
 from pathlib import Path
 from typing import Optional
 
-from .elo import INITIAL_RATING, decay_rating, form_rating_bonus, update_ratings, win_probability
+from .elo import EloParameters, decay_rating, form_rating_bonus, update_ratings, win_probability
 
 
 MATCH_COLUMNS = {
@@ -74,14 +75,17 @@ def read_events(path: Path) -> list[tuple[datetime, bool, dict[str, str]]]:
 
 
 def _rating_at(
-    saved_rating: tuple[float, datetime], at: datetime, half_life_days: Optional[float]
+    saved_rating: tuple[float, datetime],
+    at: datetime,
+    half_life_days: Optional[float],
+    initial_rating: float,
 ) -> float:
     """Oblicza rating na podaną chwilę na podstawie ostatniej zapisanej aktualizacji."""
     rating, last_result_at = saved_rating
     if half_life_days is None:
         return rating
     idle_days = (at - last_result_at) / timedelta(days=1)
-    return decay_rating(rating, idle_days, half_life_days)
+    return decay_rating(rating, idle_days, half_life_days, initial_rating=initial_rating)
 
 
 def _map_score(match: dict[str, str]) -> Optional[tuple[int, int]]:
@@ -101,23 +105,37 @@ def replay_events(
     *,
     score_margin: bool = False,
     form_window: int = 0,
+    parameters: EloParameters = EloParameters(),
+    prediction_from: Optional[datetime] = None,
+    on_prediction: Optional[Callable[[Prediction], None]] = None,
 ) -> tuple[list[Prediction], dict[str, float]]:
-    """Zwraca prognozy z chronologicznych zdarzeń i ranking na koniec odtworzenia."""
+    """Odtwarza zdarzenia i zwraca ranking końcowy.
+
+    Prognozy od prediction_from trafiają do listy lub do on_prediction.
+    Wcześniejsze zdarzenia służą do zbudowania ratingów i formy.
+    """
     if half_life_days is not None and (not isfinite(half_life_days) or half_life_days <= 0):
         raise ValueError("Okres półtrwania musi być dodatnią, skończoną liczbą dni")
     if form_window < 0:
         raise ValueError("Okno formy musi być nieujemną liczbą meczów")
+    if prediction_from is not None and prediction_from.tzinfo is None:
+        raise ValueError("Początek prognoz musi zawierać strefę czasową")
 
     ratings: dict[str, tuple[float, datetime]] = {}
     predictions: list[Prediction] = []
+    publish = predictions.append if on_prediction is None else on_prediction
+    initial_rating = parameters.initial_rating
     # Oczekiwanie z chwili startu czeka na wynik tej samej serii.
     pre_match_expectations: dict[str, tuple[datetime, float]] = {}
     recent_form: dict[str, list[tuple[datetime, str, float]]] = {}
     for at, result_available, match in events:
+        should_publish = prediction_from is None or at >= prediction_from
+        if not result_available and not should_publish and not form_window:
+            continue
         match_id = match["match_id"]
         team_a, team_b = match["team_a_id"], match["team_b_id"]
-        rating_a = _rating_at(ratings.get(team_a, (INITIAL_RATING, at)), at, half_life_days)
-        rating_b = _rating_at(ratings.get(team_b, (INITIAL_RATING, at)), at, half_life_days)
+        rating_a = _rating_at(ratings.get(team_a, (initial_rating, at)), at, half_life_days, initial_rating)
+        rating_b = _rating_at(ratings.get(team_b, (initial_rating, at)), at, half_life_days, initial_rating)
         winner = match["winner_team_id"]
 
         if result_available:
@@ -126,7 +144,13 @@ def replay_events(
             try:
                 map_score = _map_score(match) if score_margin else None
                 updated_a, updated_b = update_ratings(
-                    rating_a, rating_b, team_a_won, map_score=map_score
+                    rating_a,
+                    rating_b,
+                    team_a_won,
+                    map_score=map_score,
+                    k_factor=parameters.k_factor,
+                    elo_scale=parameters.elo_scale,
+                    score_margin_weight=parameters.score_margin_weight,
                 )
             except ValueError as error:
                 raise ValueError(f"Mecz {match_id}. {error}") from error
@@ -143,18 +167,27 @@ def replay_events(
                     if len(history) > form_window:
                         history.pop(0)
         else:
-            probability_a = win_probability(rating_a, rating_b)
+            probability_a = win_probability(rating_a, rating_b, elo_scale=parameters.elo_scale)
             if form_window:
                 pre_match_expectations[match_id] = (at, probability_a)
+            if not should_publish:
+                continue
+            if form_window:
                 form_a = form_rating_bonus(
-                    (residual for _, _, residual in recent_form.get(team_a, [])), form_window
+                    (residual for _, _, residual in recent_form.get(team_a, [])),
+                    form_window,
+                    form_elo_weight=parameters.form_elo_weight,
                 )
                 form_b = form_rating_bonus(
-                    (residual for _, _, residual in recent_form.get(team_b, [])), form_window
+                    (residual for _, _, residual in recent_form.get(team_b, [])),
+                    form_window,
+                    form_elo_weight=parameters.form_elo_weight,
                 )
-                probability_a = win_probability(rating_a + form_a, rating_b + form_b)
+                probability_a = win_probability(
+                    rating_a + form_a, rating_b + form_b, elo_scale=parameters.elo_scale
+                )
 
-            predictions.append(
+            publish(
                 Prediction(
                     match_id=match_id,
                     predicted_at=at,
@@ -170,7 +203,8 @@ def replay_events(
     # Porównujemy wszystkie drużyny na tę samą chwilę w symulacji.
     last_event_at = events[-1][0]
     final_ratings = {
-        team: _rating_at(saved, last_event_at, half_life_days) for team, saved in ratings.items()
+        team: _rating_at(saved, last_event_at, half_life_days, initial_rating)
+        for team, saved in ratings.items()
     }
     return predictions, final_ratings
 
@@ -181,10 +215,12 @@ def replay(
     *,
     score_margin: bool = False,
     form_window: int = 0,
+    parameters: EloParameters = EloParameters(),
 ) -> None:
     """Pokazuje prognozy przedmeczowe, rzeczywiste wyniki i końcowe ratingi."""
     predictions, final_ratings = replay_events(
-        read_events(path), half_life_days, score_margin=score_margin, form_window=form_window
+        read_events(path), half_life_days,
+        score_margin=score_margin, form_window=form_window, parameters=parameters,
     )
     for prediction in predictions:
         probability_a = prediction.probability_a

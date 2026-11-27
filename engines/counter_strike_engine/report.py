@@ -10,24 +10,61 @@ Jeśli A wygra, strata wynosi −ln(0,8) ≈ 0,223. Jeśli wygra B, wynosi −ln
 
 import argparse
 import csv
+from dataclasses import dataclass
 from datetime import datetime
 from math import log
 from pathlib import Path
-from statistics import fmean
 from tempfile import NamedTemporaryFile
 
 from .replay import add_feature_arguments, read_events, replay_events
 
 
+@dataclass(frozen=True)
+class Metrics:
+    brier_score: float
+    log_loss: float
+    accuracy: float
+    brier_skill_score: float
+    matches: int
+
+
+class ScoreAccumulator:
+    """Liczy metryki na bieżąco, przechowując wyłącznie sumy i liczbę meczów."""
+
+    def __init__(self) -> None:
+        self._brier = 0.0
+        self._log_loss = 0.0
+        self._correct = 0.0
+        self._matches = 0
+
+    def add(self, probability: float, won: bool) -> None:
+        self._brier += (probability - won) ** 2
+        winner_probability = probability if won else 1 - probability
+        # Granica pozwala policzyć log loss przy prognozie równej zeru dla zwycięzcy.
+        self._log_loss -= log(max(winner_probability, 1e-15))
+        self._correct += 0.5 if probability == 0.5 else float((probability > 0.5) == won)
+        self._matches += 1
+
+    def metrics(self) -> Metrics:
+        if not self._matches:
+            raise ValueError("Brak meczów do obliczenia metryk")
+        brier = self._brier / self._matches
+        return Metrics(
+            brier_score=brier,
+            log_loss=self._log_loss / self._matches,
+            accuracy=self._correct / self._matches,
+            brier_skill_score=1 - brier / 0.25,
+            matches=self._matches,
+        )
+
+
 def _scores(probabilities: list[float], outcomes: list[bool]) -> tuple[float, float]:
-    """Liczy Brier score i log loss dla prawdopodobieństwa wygranej drużyny A."""
-    brier = fmean((probability - won) ** 2 for probability, won in zip(probabilities, outcomes))
-    winner_probabilities = (
-        probability if won else 1 - probability for probability, won in zip(probabilities, outcomes)
-    )
-    # Dolna granica pozwala policzyć log loss także przy prognozie równej zeru dla zwycięzcy.
-    log_loss = fmean(-log(max(probability, 1e-15)) for probability in winner_probabilities)
-    return brier, log_loss
+    """Liczy Brier score i log loss dla dotychczasowego raportu."""
+    scores = ScoreAccumulator()
+    for probability, won in zip(probabilities, outcomes):
+        scores.add(probability, won)
+    metrics = scores.metrics()
+    return metrics.brier_score, metrics.log_loss
 
 
 def _write_csv(output: Path, columns: list[str], rows: list[tuple[object, ...]]) -> None:

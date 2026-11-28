@@ -36,6 +36,8 @@ pub fn router() -> Router<AppState> {
 /// Wynik rozliczenia zaległych kuponów (`POST /api/v1/simulation/settle`).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct SettleResponse {
+    /// Łączna liczba rozliczonych kuponów (`WON`, `LOST` lub `VOID`).
+    #[schema(example = 12)]
     pub settled_bets: usize,
 }
 
@@ -43,12 +45,16 @@ pub struct SettleResponse {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct BacktestBetsQuery {
-    /// Opcjonalny identyfikator agenta filtrujący zwrócone kupony.
+    /// Opcjonalny identyfikator agenta filtrujący zwrócone wirtualne kupony.
+    #[param(example = 1)]
     pub agent_id: Option<i32>,
 }
 
-/// POST /api/v1/simulation/settle
-/// Rozlicza wszystkie nierozliczone zakłady na zakończone mecze i powiadamia agentów.
+/// Rozliczenie wszystkich nierozliczonych kuponów produkcyjnych.
+///
+/// Przetwarza wszystkie zakłady ze statusem `PENDING` dla meczów o statusie `FINISHED` lub `CANCELLED`
+/// (wygrane `WON`, przegrane `LOST` oraz zwroty `VOID`), aktualizuje salda w tabeli `agents`
+/// (każdy mecz w osobnej transakcji ACID) i publikuje zdarzenia `MATCH_SETTLED` przez WebSocket.
 #[utoipa::path(
     post,
     path = "/api/v1/simulation/settle",
@@ -68,8 +74,12 @@ pub async fn settle(State(state): State<AppState>) -> AppResult<Json<SettleRespo
     }))
 }
 
-/// POST /api/v1/simulation/backtest
-/// Uruchamia symulację historyczną w tle na izolowanych wirtualnych portfelach – `202 Accepted` z planem przebiegu.
+/// Uruchomienie historycznej symulacji (backtestu) w tle.
+///
+/// Odtwarza mecze `FINISHED` z wyznaczonym zwycięzcą i kursami `MARKET_AVG` dzień po dniu (UTC)
+/// na w pełni izolowanych, wirtualnych portfelach w pamięci serwera (`BacktestStore`).
+/// Nigdy nie modyfikuje produkcyjnych tabel `agents` ani `bets`. Jednocześnie może trwać tylko
+/// jeden backtest (kolejna próba zwraca `409 Conflict`).
 #[utoipa::path(
     post,
     path = "/api/v1/simulation/backtest",
@@ -77,8 +87,8 @@ pub async fn settle(State(state): State<AppState>) -> AppResult<Json<SettleRespo
     request_body = BacktestParams,
     responses(
         (status = 202, description = "Symulacja historyczna uruchomiona w tle", body = BacktestPlan),
-        (status = 400, description = "Niepoprawne parametry symulacji", body = crate::error::ErrorResponse),
-        (status = 404, description = "Brak zakończonych meczów z kursami dla wybranego sezonu", body = crate::error::ErrorResponse),
+        (status = 400, description = "Puste pole season lub niepoprawne initial_bankroll (wymagane > 0, maks. 2 miejsca po przecinku)", body = crate::error::ErrorResponse),
+        (status = 404, description = "Brak zakończonych meczów z kursami MARKET_AVG dla wybranego sezonu/sportu", body = crate::error::ErrorResponse),
         (status = 409, description = "Inny backtest już trwa", body = crate::error::ErrorResponse),
         (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
     )
@@ -91,8 +101,10 @@ pub async fn backtest(
     Ok((StatusCode::ACCEPTED, Json(plan)))
 }
 
-/// GET /api/v1/simulation/backtest
-/// Zwraca raport aktualnego lub ostatniego przebiegu backtestu (z rankingiem i kuponami wirtualnymi).
+/// Pełny raport aktualnego lub ostatniego przebiegu backtestu.
+///
+/// Zawiera metadane przebiegu, ranking wirtualnych portfeli (`leaderboard`) oraz chronologiczną
+/// listę wirtualnych kuponów (`bets`, z polami `match_date` i `bankroll_after`).
 #[utoipa::path(
     get,
     path = "/api/v1/simulation/backtest",
@@ -109,14 +121,16 @@ pub async fn get_latest_backtest(State(state): State<AppState>) -> AppResult<Jso
     Ok(Json(report))
 }
 
-/// GET /api/v1/simulation/backtest/runs
-/// Zwraca listę zapisanych w pamięci przebiegów backtestu (od najnowszego).
+/// Lista zapisanych w pamięci przebiegów backtestu.
+///
+/// Zwraca skrócone podsumowania od najnowszego uruchomienia (aktywny przebieg na początku).
+/// Serwer przechowuje w pamięci do 20 ostatnich zakończonych przebiegów (`MAX_STORED_RUNS = 20`).
 #[utoipa::path(
     get,
     path = "/api/v1/simulation/backtest/runs",
     tag = "Simulation",
     responses(
-        (status = 200, description = "Lista przebiegów backtestu", body = [BacktestRunSummary])
+        (status = 200, description = "Lista przebiegów backtestu (od najnowszego)", body = [BacktestRunSummary])
     )
 )]
 pub async fn list_backtest_runs(
@@ -125,14 +139,13 @@ pub async fn list_backtest_runs(
     Ok(Json(state.backtest.list_runs().await))
 }
 
-/// GET /api/v1/simulation/backtest/runs/{run_id}
-/// Zwraca pełny raport wskazanego przebiegu backtestu.
+/// Pełny raport wybranego przebiegu backtestu po `run_id`.
 #[utoipa::path(
     get,
     path = "/api/v1/simulation/backtest/runs/{run_id}",
     tag = "Simulation",
     params(
-        ("run_id" = u64, Path, description = "ID uruchomienia backtestu")
+        ("run_id" = u64, Path, description = "Identyfikator uruchomienia backtestu", example = 1)
     ),
     responses(
         (status = 200, description = "Pełny raport backtestu", body = BacktestReport),
@@ -150,14 +163,15 @@ pub async fn get_backtest_run(
     Ok(Json(report))
 }
 
-/// GET /api/v1/simulation/backtest/runs/{run_id}/leaderboard
-/// Zwraca ranking wirtualnych portfeli agentów dla wskazanego przebiegu backtestu.
+/// Ranking wirtualnych portfeli dla wybranego przebiegu backtestu.
+///
+/// Zwraca tabelę wyników posortowaną malejąco po `current_bankroll`, a następnie rosnąco po `agent_id`.
 #[utoipa::path(
     get,
     path = "/api/v1/simulation/backtest/runs/{run_id}/leaderboard",
     tag = "Simulation",
     params(
-        ("run_id" = u64, Path, description = "ID uruchomienia backtestu")
+        ("run_id" = u64, Path, description = "Identyfikator uruchomienia backtestu", example = 1)
     ),
     responses(
         (status = 200, description = "Ranking wirtualnych portfeli dla przebiegu backtestu", body = [BacktestLeaderboardEntry]),
@@ -176,14 +190,15 @@ pub async fn get_backtest_leaderboard(
     Ok(Json(leaderboard))
 }
 
-/// GET /api/v1/simulation/backtest/runs/{run_id}/bets
-/// Zwraca wirtualne zakłady postawione w danym przebiegu backtestu (opcjonalnie dla jednego agenta).
+/// Wirtualne kupony postawione w wybranym przebiegu backtestu.
+///
+/// Zwraca kupony posortowane chronologicznie (`match_date ASC, id ASC`), z opcjonalnym filtrem `?agent_id=...`.
 #[utoipa::path(
     get,
     path = "/api/v1/simulation/backtest/runs/{run_id}/bets",
     tag = "Simulation",
     params(
-        ("run_id" = u64, Path, description = "ID uruchomienia backtestu"),
+        ("run_id" = u64, Path, description = "Identyfikator uruchomienia backtestu", example = 1),
         BacktestBetsQuery
     ),
     responses(

@@ -1,7 +1,7 @@
 // src/ingest/mod.rs
 //! Warstwa ETL: pobieranie danych sportowych z zewnętrznych API i zapis do PostgreSQL.
 //!
-//! Każde źródło (`football`, `basketball`, `tennis`) tłumaczy odpowiedź dostawcy na wspólny
+//! Każde źródło (`football`, `basketball`, `tennis`, `cs2`) tłumaczy odpowiedź dostawcy na wspólny
 //! typ [`IngestedMatch`], a [`store_matches`] zapisuje go idempotentnie
 //! (`INSERT ... ON CONFLICT DO UPDATE` oraz dopasowanie po `external_ids` i oknie czasowym),
 //! więc import można bezpiecznie powtarzać.

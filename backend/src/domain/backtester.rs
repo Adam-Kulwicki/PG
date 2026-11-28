@@ -44,32 +44,47 @@ const MAX_BET_WINDOW_MS: u64 = 30_000;
 /// Maksymalna liczba zakończonych/przerwanych przebiegów backtestu trzymanych w pamięci.
 pub const MAX_STORED_RUNS: usize = 20;
 
+/// Parametry uruchomienia symulacji historycznej (`POST /api/v1/simulation/backtest`).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct BacktestParams {
-    /// Sezon do odtworzenia, np. "2025-2026"
+    /// Sezon do odtworzenia, np. `"2024-2025"` lub `"2026"` (wymagane, niepuste).
+    #[schema(example = "2024-2025")]
     pub season: String,
-    /// Opcjonalny filtr dyscypliny: FOOTBALL / BASKETBALL / TENNIS / CS2
+    /// Opcjonalny filtr dyscypliny: `"FOOTBALL"`, `"BASKETBALL"`, `"TENNIS"` lub `"CS2"`.
+    #[schema(example = "FOOTBALL")]
     pub sport: Option<String>,
-    /// Czas (ms) na zakłady agentów w każdym dniu symulacji (domyślnie 500, max 30000)
+    /// Czas (ms) na zakłady agentów w każdym dniu symulacji (domyślnie `500`, maks. `30000`).
+    #[schema(example = 500)]
     pub bet_window_ms: Option<u64>,
-    /// Opcjonalny wspólny kapitał początkowy wirtualnych portfeli dla tej symulacji.
+    /// Opcjonalny wspólny kapitał początkowy wirtualnych portfeli dla tej symulacji (`> 0`, maks. 2 miejsca po przecinku).
     /// Gdy `None`, każdy agent startuje ze swoim `agents.initial_bankroll` z bazy.
+    #[schema(example = 1000.00)]
     pub initial_bankroll: Option<Decimal>,
 }
 
+/// Plan uruchomionej symulacji historycznej zwracany z kodem `202 Accepted`.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct BacktestPlan {
+    #[schema(example = 1)]
     pub run_id: u64,
+    #[schema(example = "2024-2025")]
     pub season: String,
+    #[schema(example = "FOOTBALL")]
     pub sport: Option<String>,
+    #[schema(example = 380)]
     pub total_matches: usize,
+    #[schema(example = 112)]
     pub total_days: usize,
+    #[schema(example = 500)]
     pub bet_window_ms: u64,
+    #[schema(example = 1000.00)]
     pub initial_bankroll: Option<Decimal>,
+    /// Szacowany czas trwania symulacji w sekundach (`total_days * bet_window_ms / 1000`).
+    #[schema(example = 56.0)]
     pub estimated_seconds: f64,
 }
 
-/// Stan pojedynczego przebiegu backtestu.
+/// Stan pojedynczego przebiegu backtestu (`RUNNING`, `COMPLETED`, `FAILED`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BacktestStatus {
@@ -91,19 +106,32 @@ pub struct VirtualWallet {
 /// Wirtualny kupon postawiony podczas symulacji backtestera.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct VirtualBet {
+    #[schema(example = 1)]
     pub id: u64,
+    #[schema(example = 1)]
     pub agent_id: i32,
+    #[schema(example = 42)]
     pub match_id: i32,
     /// Data historycznego meczu (ułatwia budowanie wykresów krzywej kapitału).
     pub match_date: DateTime<Utc>,
+    /// Obstawiony wynik: `"HOME"`, `"DRAW"` lub `"AWAY"`.
+    #[schema(example = "HOME")]
     pub bet_selection: String,
+    #[schema(example = 50.00)]
     pub stake: Decimal,
+    #[schema(example = 2.15)]
     pub odds_taken: Decimal,
+    #[schema(example = 0.075)]
     pub expected_value: Option<Decimal>,
+    /// Stan kuponu: `"PENDING"`, `"WON"`, `"LOST"` lub `"VOID"`.
+    #[schema(example = "WON")]
     pub status: String,
+    #[schema(example = 57.50)]
     pub profit_loss: Decimal,
     /// Saldo wirtualnego portfela po rozliczeniu tego kuponu (`None`, dopóki `PENDING`).
+    #[schema(example = 1057.50)]
     pub bankroll_after: Option<Decimal>,
+    #[schema(example = "Dodatnie EV z ułamkowego Kelly'ego")]
     pub reasoning: Option<String>,
     pub placed_at: DateTime<Utc>,
     pub settled_at: Option<DateTime<Utc>>,
@@ -112,33 +140,55 @@ pub struct VirtualBet {
 /// Wiersz rankingu dla pojedynczego przebiegu backtestu.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
 pub struct BacktestLeaderboardEntry {
+    #[schema(example = 1)]
     pub agent_id: i32,
+    #[schema(example = "Agent_Kelly_Value")]
     pub agent_name: String,
+    #[schema(example = "Stawia wg ułamkowego Kryterium Kelly'ego przy EV > 5%")]
     pub strategy_description: Option<String>,
+    #[schema(example = 1000.00)]
     pub initial_bankroll: Decimal,
+    #[schema(example = 1240.50)]
     pub current_bankroll: Decimal,
+    #[schema(example = 240.50)]
     pub total_profit: Decimal,
+    #[schema(example = 24.05)]
     pub roi_pct: Decimal,
+    #[schema(example = 85)]
     pub total_bets: usize,
+    #[schema(example = 85)]
     pub settled_bets: usize,
+    #[schema(example = 48)]
     pub won_bets: usize,
+    #[schema(example = 37)]
     pub lost_bets: usize,
+    #[schema(example = 0)]
     pub void_bets: usize,
 }
 
 /// Skrócone podsumowanie przebiegu backtestu (bez pełnej listy kuponów).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BacktestRunSummary {
+    #[schema(example = 1)]
     pub run_id: u64,
     pub status: BacktestStatus,
+    #[schema(example = "2024-2025")]
     pub season: String,
+    #[schema(example = "FOOTBALL")]
     pub sport: Option<String>,
+    #[schema(example = 380)]
     pub total_matches: usize,
+    #[schema(example = 112)]
     pub total_days: usize,
+    #[schema(example = 112)]
     pub completed_days: usize,
+    #[schema(example = 500)]
     pub bet_window_ms: u64,
+    #[schema(example = 1000.00)]
     pub initial_bankroll: Option<Decimal>,
+    #[schema(example = 140)]
     pub total_bets: usize,
+    #[schema(example = 140)]
     pub settled_bets: usize,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
@@ -148,14 +198,22 @@ pub struct BacktestRunSummary {
 /// Pełny raport pojedynczego przebiegu backtestu wraz z rankingiem i wirtualnymi kuponami.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BacktestReport {
+    #[schema(example = 1)]
     pub run_id: u64,
     pub status: BacktestStatus,
+    #[schema(example = "2024-2025")]
     pub season: String,
+    #[schema(example = "FOOTBALL")]
     pub sport: Option<String>,
+    #[schema(example = 380)]
     pub total_matches: usize,
+    #[schema(example = 112)]
     pub total_days: usize,
+    #[schema(example = 112)]
     pub completed_days: usize,
+    #[schema(example = 500)]
     pub bet_window_ms: u64,
+    #[schema(example = 1000.00)]
     pub initial_bankroll: Option<Decimal>,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,

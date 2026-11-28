@@ -13,8 +13,11 @@ use utoipa::ToSchema;
 /// Standardowa odpowiedź błędu zwracana przez REST API.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
+    /// Czytelny opis przyczyny błędu.
     #[schema(example = "Mecz o ID 999 nie istnieje")]
     pub error: String,
+    /// Maszynowy kod błędu (`BAD_REQUEST`, `UNAUTHORIZED`, `NOT_FOUND`, `CONFLICT`,
+    /// `BET_REJECTED`, `INSUFFICIENT_FUNDS`, `DATABASE_ERROR`, `EXTERNAL_API_ERROR`, `EXTERNAL_DATA_ERROR`).
     #[schema(example = "NOT_FOUND")]
     pub code: String,
 }

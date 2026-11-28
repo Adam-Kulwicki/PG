@@ -44,20 +44,23 @@ pub fn validate_probabilities(home: Decimal, draw: Decimal, away: Decimal) -> Ap
     Ok(())
 }
 
-/// POST /api/v1/predictions
+/// Zapis predykcji modelu ML, wyliczenie kursów `MARKET_AVG` i rozgłoszenie okazji.
 ///
-/// Zapisuje (upsert) predykcję silnika, wylicza i zapisuje kurs `MARKET_AVG` w `match_odds`
-/// (zarówno dla `SCHEDULED`, jak i `FINISHED` pod backtest) oraz – dla meczów `SCHEDULED` –
-/// rozgłasza `MATCH_OPPORTUNITY` do wszystkich podłączonych agentów.
+/// * Automatycznie rejestruje model po parze `(model_name, model_version)` (domyślna wersja `"1.0"`)
+///   i wykonuje upsert predykcji po `(match_id, model_id)`.
+/// * Waliduje prawdopodobieństwa: każde w `[0, 1]`, suma `prob_home + prob_draw + prob_away` w `1.0 ± 0.01`.
+/// * Automatycznie wylicza i zapisuje kurs `MARKET_AVG` z marżą `BOOKMAKER_MARGIN` (rynek `1X2` dla `FOOTBALL`,
+///   rynek `12` z `odds_draw = null` dla `BASKETBALL`, `TENNIS` i `CS2`) — także dla meczów `FINISHED` pod backtester.
+/// * Dla meczów o statusie `SCHEDULED` publikuje zdarzenie `MATCH_OPPORTUNITY` do wszystkich agentów na `/ws/agent`.
 #[utoipa::path(
     post,
     path = "/api/v1/predictions",
     tag = "Predictions",
     request_body = CreatePredictionDto,
     responses(
-        (status = 201, description = "Predykcja zapisana (upsert), kurs MARKET_AVG wyliczony i rozgłoszony przez WebSocket", body = Prediction),
-        (status = 400, description = "Niepoprawne prawdopodobieństwa lub pusta nazwa modelu", body = crate::error::ErrorResponse),
-        (status = 404, description = "Mecz nie istnieje", body = crate::error::ErrorResponse),
+        (status = 201, description = "Predykcja zapisana (upsert), kurs MARKET_AVG wyliczony i opublikowany przez WebSocket (dla SCHEDULED)", body = Prediction),
+        (status = 400, description = "Niepoprawne prawdopodobieństwa (poza [0, 1] lub suma != 1.0 ± 0.01) albo pusta nazwa modelu", body = crate::error::ErrorResponse),
+        (status = 404, description = "Mecz o podanym match_id nie istnieje", body = crate::error::ErrorResponse),
         (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
     )
 )]

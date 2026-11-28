@@ -19,7 +19,7 @@ pub struct Competition {
     pub created_at: DateTime<Utc>,
 }
 
-/// Uczestnik meczu: drużyna (piłka, koszykówka) albo zawodnik (tenis).
+/// Uczestnik meczu: drużyna (piłka, koszykówka, CS2) albo zawodnik (tenis).
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Participant {
     pub id: i32,

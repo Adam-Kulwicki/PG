@@ -10,12 +10,21 @@ use crate::{error::AppResult, state::AppState};
 /// Odpowiedź diagnostyki serwera (`GET /health`).
 #[derive(Debug, Serialize, ToSchema)]
 pub struct HealthResponse {
+    /// Ogólny status usługi (`"ok"`).
+    #[schema(example = "ok")]
     pub status: String,
+    /// Stan połączenia z bazą PostgreSQL (`"connected"`).
+    #[schema(example = "connected")]
     pub database: String,
+    /// Liczba aktywnych połączeń WebSocket subskrybujących kanał broadcast (`/ws/agent`).
+    #[schema(example = 2)]
     pub connected_ws_agents: usize,
 }
 
-/// GET /health – sprawdza połączenie z bazą i zwraca liczbę subskrybentów kanału WebSocket.
+/// Diagnostyka serwera i połączenia z bazą danych.
+///
+/// Wykonuje testowe zapytanie `SELECT 1` w PostgreSQL i zwraca aktualną liczbę odbiorców
+/// kanału broadcast WebSocket (`/ws/agent`).
 #[utoipa::path(
     get,
     path = "/health",

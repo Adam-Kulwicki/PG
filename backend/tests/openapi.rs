@@ -99,6 +99,41 @@ fn openapi_spec_contains_all_endpoints_and_hides_agent_api_key() {
         !agent_props.contains_key("api_key"),
         "pole api_key nie może być ujawniane w schemacie Agent"
     );
+
+    let info_desc = spec["info"]["description"]
+        .as_str()
+        .expect("brak info.description w specyfikacji");
+    for needle in [
+        "FOOTBALL",
+        "BASKETBALL",
+        "TENNIS",
+        "CS2",
+        "MARKET_AVG",
+        "/ws/agent",
+        "PLACE_BET",
+        "GET_BANKROLL",
+    ] {
+        assert!(
+            info_desc.contains(needle),
+            "info.description powinno zawierać '{needle}'"
+        );
+    }
+
+    for (path, method) in expected_operations {
+        let summary = paths[path][method]["summary"]
+            .as_str()
+            .unwrap_or_default()
+            .trim();
+        assert!(
+            !summary.is_empty(),
+            "operacja {method} {path} powinna mieć niepuste pole summary"
+        );
+    }
+
+    let tags = spec["tags"]
+        .as_array()
+        .expect("brak listy tags w specyfikacji");
+    assert_eq!(tags.len(), 6, "oczekiwano dokładnie 6 tagów w OpenAPI");
 }
 
 #[test]

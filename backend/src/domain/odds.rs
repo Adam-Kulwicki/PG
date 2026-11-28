@@ -23,7 +23,7 @@ pub fn default_bookmaker_margin() -> Decimal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CalculatedOdds {
     pub odds_home: Decimal,
-    /// `None` dla dyscyplin bez remisu (koszykówka, tenis).
+    /// `None` dla dyscyplin bez remisu (koszykówka, tenis, CS2).
     pub odds_draw: Option<Decimal>,
     pub odds_away: Decimal,
 }
@@ -39,7 +39,7 @@ pub fn prob_to_odds(prob: Decimal, margin: Decimal) -> Decimal {
     raw.round_dp(2).clamp(min_odds(), max_odds())
 }
 
-/// Wylicza komplet kursów `1X2` (dla piłki nożnej) lub `12` (dla koszykówki i tenisa).
+/// Wylicza komplet kursów `1X2` (dla piłki nożnej) lub `12` (dla koszykówki, tenisa i CS2).
 pub fn calculate_market_odds(
     prob_home: Decimal,
     prob_draw: Decimal,

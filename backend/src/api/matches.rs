@@ -30,19 +30,26 @@ pub fn router() -> Router<AppState> {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct MatchFilter {
-    /// Dyscyplina: "FOOTBALL", "BASKETBALL", "TENNIS" lub "CS2" (wielkość liter bez znaczenia).
+    /// Dyscyplina: `"FOOTBALL"`, `"BASKETBALL"`, `"TENNIS"` lub `"CS2"` (wielkość liter bez znaczenia).
+    #[param(example = "FOOTBALL")]
     pub sport: Option<String>,
-    /// Status meczu, np. "SCHEDULED" lub "FINISHED".
+    /// Status meczu: `"SCHEDULED"`, `"LIVE"`, `"FINISHED"`, `"POSTPONED"` lub `"CANCELLED"` (wielkość liter bez znaczenia).
+    #[param(example = "SCHEDULED")]
     pub status: Option<String>,
-    /// Sezon w formacie używanym w bazie, np. "2026-2027".
+    /// Dokładna etykieta sezonu w bazie, np. `"2024-2025"`, `"2026"` lub `"2026-2027"`.
+    #[param(example = "2024-2025")]
     pub season: Option<String>,
-    /// Maksymalna liczba wyników (ograniczona do [`MAX_MATCHES_LIMIT`]; brak = wszystkie).
+    /// Maksymalna liczba wyników na stronę (przycinana do zakresu `1..=5000`; brak parametru zwraca wszystkie pasujące mecze).
+    #[param(example = 100)]
     pub limit: Option<i64>,
-    /// Przesunięcie wyników do paginacji (domyślnie `0`).
+    /// Przesunięcie wyników do paginacji (domyślnie `0`; wartości ujemne są sprowadzane do `0`).
+    #[param(example = 0)]
     pub offset: Option<i64>,
-    /// Dolna granica daty meczu w UTC (`match_date >= date_from`).
+    /// Dolna granica daty meczu w UTC w formacie RFC 3339 (`match_date >= date_from`).
+    #[param(example = "2024-10-01T00:00:00Z")]
     pub date_from: Option<DateTime<Utc>>,
-    /// Górna granica daty meczu w UTC (`match_date <= date_to`).
+    /// Górna granica daty meczu w UTC w formacie RFC 3339 (`match_date <= date_to`).
+    #[param(example = "2025-05-01T00:00:00Z")]
     pub date_to: Option<DateTime<Utc>>,
 }
 
@@ -54,7 +61,10 @@ pub fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> (Option<
     )
 }
 
-/// GET /api/v1/matches – lista meczów, opcjonalnie filtrowana (`?sport=...&status=...&season=...&limit=...&offset=...&date_from=...&date_to=...`).
+/// Lista meczów z filtrowaniem, zakresem dat i paginacją.
+///
+/// Zwraca mecze posortowane rosnąco według `(match_date ASC, id ASC)` wraz z nazwami uczestników,
+/// polimorficznym polem `match_details` oraz kursami `MARKET_AVG` (`null`, jeśli mecz nie ma jeszcze kursów).
 #[utoipa::path(
     get,
     path = "/api/v1/matches",
@@ -62,7 +72,7 @@ pub fn normalize_pagination(limit: Option<i64>, offset: Option<i64>) -> (Option<
     params(MatchFilter),
     responses(
         (status = 200, description = "Lista meczów z kursami MARKET_AVG", body = [MatchWithDetailsDto]),
-        (status = 400, description = "Niepoprawne parametry filtra", body = crate::error::ErrorResponse),
+        (status = 400, description = "Niepoprawne parametry filtra (np. zły format daty RFC 3339)", body = crate::error::ErrorResponse),
         (status = 500, description = "Błąd bazy danych", body = crate::error::ErrorResponse)
     )
 )]
@@ -121,13 +131,16 @@ pub async fn list_matches(
     Ok(Json(matches))
 }
 
-/// GET /api/v1/matches/{id} – szczegóły jednego meczu; nieistniejący ID daje 404.
+/// Szczegóły pojedynczego meczu po identyfikatorze.
+///
+/// Zwraca rekord meczu wraz z nazwami uczestników, `match_details` oraz kursami `MARKET_AVG`.
+/// Dla nieistniejącego identyfikatora zwraca `404 Not Found`.
 #[utoipa::path(
     get,
     path = "/api/v1/matches/{id}",
     tag = "Matches",
     params(
-        ("id" = i32, Path, description = "ID meczu")
+        ("id" = i32, Path, description = "Identyfikator meczu w bazie", example = 4)
     ),
     responses(
         (status = 200, description = "Szczegóły meczu", body = MatchWithDetailsDto),

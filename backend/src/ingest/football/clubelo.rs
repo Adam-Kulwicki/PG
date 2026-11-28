@@ -5,13 +5,23 @@
 //! poprzedzającego spotkanie (`Date <= match_date.date_naive() - 1 dzień`), a ze strony
 //! `/Fixtures` pobierane są wyłącznie przedmeczowe prognozy dla spotkań `SCHEDULED`.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use chrono::{DateTime, Duration as ChronoDuration, NaiveDate, Utc};
 use serde::Deserialize;
 use sqlx::types::Json;
 
-use super::teams::{clubelo_slug, normalize_football_team_name};
+use super::{
+    clubelo_archive::{
+        collect_live_calibration_samples, compute_league_calibration_offsets,
+        fetch_sql_calibration_samples, load_or_fetch_clubelo_archive, ClubEloArchiveMap,
+        CALIBRATION_MIN_SAMPLES,
+    },
+    teams::{clubelo_slug, league_spec, normalize_football_team_name, TOP5_LEAGUES},
+};
 use crate::{
     error::{AppError, AppResult},
     ingest::{fetch_text_with_timeout, merge_match_details},
@@ -62,6 +72,7 @@ struct VegaEloRow {
 #[derive(Debug, sqlx::FromRow)]
 struct FootballMatchEloRow {
     id: i32,
+    competition_code: String,
     match_date: DateTime<Utc>,
     status: String,
     match_details: Json<MatchDetails>,
@@ -369,6 +380,79 @@ async fn fetch_clubelo_html(client: &reqwest::Client, path: &str) -> AppResult<S
     .await
 }
 
+fn existing_pre_match_elo(details: &MatchDetails) -> Option<&FootballPreMatchElo> {
+    match details {
+        MatchDetails::Football { pre_match_elo, .. } => pre_match_elo.as_deref(),
+        _ => None,
+    }
+}
+
+/// Wyznacza przedmeczowy rating Elo drużyny dla meczu historycznego (`D - 1`):
+/// najpierw z wykresu live `clubelo.com/{slug}` (wraz z bieżącym rankingiem), a w razie
+/// braku pokrycia z skalibrowanego archiwum `EloRatings.csv` (z `rank = None`, bez wycieku rankingu).
+pub fn resolve_historical_team_elo(
+    canonical_name: &str,
+    country_code: Option<&str>,
+    match_date: DateTime<Utc>,
+    club_histories: &HashMap<String, Vec<ClubEloPoint>>,
+    current_rankings: &HashMap<String, (f64, Option<i32>)>,
+    archive: Option<(&ClubEloArchiveMap, &HashMap<String, f64>)>,
+) -> Option<(f64, Option<i32>)> {
+    if let Some(elo) = club_histories
+        .get(canonical_name)
+        .and_then(|points| lookup_pre_match_elo_point(points, match_date))
+    {
+        let rank = current_rankings.get(canonical_name).and_then(|(_, r)| *r);
+        return Some((elo, rank));
+    }
+
+    let (archive_map, offsets) = archive?;
+    let country = country_code?;
+    let points = archive_map.get(&(country.to_string(), canonical_name.to_string()))?;
+    let raw_elo = lookup_pre_match_elo_point(points, match_date)?;
+    let offset = offsets.get(country).copied().unwrap_or(0.0);
+    Some((raw_elo + offset, None))
+}
+
+fn collect_missing_archive_countries(
+    rows: &[FootballMatchEloRow],
+    club_histories: &HashMap<String, Vec<ClubEloPoint>>,
+) -> HashSet<&'static str> {
+    let mut needed_countries = HashSet::new();
+
+    for row in rows {
+        if row.status == "SCHEDULED" {
+            continue;
+        }
+        let Some(spec) = league_spec(&row.competition_code) else {
+            continue;
+        };
+
+        let existing = existing_pre_match_elo(&row.match_details.0);
+        let side_pairs = [
+            (&row.home_name, existing.and_then(|e| e.home_elo)),
+            (&row.away_name, existing.and_then(|e| e.away_elo)),
+        ];
+
+        for (team_name, existing_side) in side_pairs {
+            if existing_side.is_some() {
+                continue;
+            }
+            let canonical = normalize_football_team_name(team_name);
+            let has_live_elo = club_histories
+                .get(canonical)
+                .and_then(|points| lookup_pre_match_elo_point(points, row.match_date))
+                .is_some();
+            if !has_live_elo {
+                needed_countries.insert(spec.clubelo_country);
+                break;
+            }
+        }
+    }
+
+    needed_countries
+}
+
 /// Wzbogaca istniejące mecze piłkarskie w bazie o przedmeczowe ratingi z `https://clubelo.com` (`D - 1`)
 /// oraz prawdopodobieństwa `/Fixtures` dla spotkań `SCHEDULED`. Nigdy nie tworzy nowych meczów.
 pub async fn enrich_matches_with_clubelo(
@@ -384,6 +468,7 @@ pub async fn enrich_matches_with_clubelo(
         r#"
         SELECT
             m.id,
+            c.external_code AS competition_code,
             m.match_date,
             m.status,
             m.match_details,
@@ -397,6 +482,8 @@ pub async fn enrich_matches_with_clubelo(
           AND c.external_code = ANY($1)
           AND (
               m.match_details->'pre_match_elo' IS NULL
+              OR m.match_details->'pre_match_elo'->>'home_elo' IS NULL
+              OR m.match_details->'pre_match_elo'->>'away_elo' IS NULL
               OR m.status = 'SCHEDULED'
           )
         ORDER BY m.match_date ASC
@@ -475,28 +562,105 @@ pub async fn enrich_matches_with_clubelo(
         }
     }
 
+    // Leniwe ładowanie archiwum `EloRatings.csv` tylko wtedy, gdy zostały mecze historyczne z brakującym Elo.
+    let needed_archive_countries = collect_missing_archive_countries(&rows, &club_histories);
+    let archive_data: Option<(ClubEloArchiveMap, HashMap<String, f64>)> =
+        if needed_archive_countries.is_empty() {
+            None
+        } else {
+            match load_or_fetch_clubelo_archive(&state.http_client).await {
+                Ok(archive_map) => {
+                    let live_samples =
+                        collect_live_calibration_samples(&club_histories, &archive_map);
+                    let mut fallback_samples: HashMap<String, Vec<f64>> = HashMap::new();
+
+                    for spec in TOP5_LEAGUES {
+                        let country_code = spec.clubelo_country;
+                        if !needed_archive_countries.contains(country_code) {
+                            continue;
+                        }
+                        let live_count = live_samples.get(country_code).map_or(0, Vec::len);
+                        if live_count < CALIBRATION_MIN_SAMPLES {
+                            let sql_samples =
+                                fetch_sql_calibration_samples(&state.db, &spec, &archive_map)
+                                    .await?;
+                            fallback_samples.insert(country_code.to_string(), sql_samples);
+                        }
+                    }
+
+                    let offsets = compute_league_calibration_offsets(
+                        &club_histories,
+                        &archive_map,
+                        &fallback_samples,
+                    );
+                    Some((archive_map, offsets))
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "ClubElo archiwum: nie udało się wczytać/pobrać EloRatings.csv: {err}"
+                    );
+                    None
+                }
+            }
+        };
+    let archive_ref = archive_data
+        .as_ref()
+        .map(|(archive_map, offsets)| (archive_map, offsets));
+
     // 4. Dopinamy wyliczone Elo do `match_details` w jednej transakcji SQL.
     let mut tx = state.db.begin().await?;
     let mut updated = 0;
+    let mut warned_unresolved_teams: HashSet<(String, String)> = HashSet::new();
 
     for row in rows {
         let home_canonical = normalize_football_team_name(&row.home_name);
         let away_canonical = normalize_football_team_name(&row.away_name);
 
-        let resolve_team = |canonical: &str| -> Option<(f64, Option<i32>)> {
-            if row.status == "SCHEDULED" {
-                current_rankings.get(canonical).copied()
-            } else {
-                let elo = club_histories
-                    .get(canonical)
-                    .and_then(|points| lookup_pre_match_elo_point(points, row.match_date))?;
-                let rank = current_rankings.get(canonical).and_then(|(_, r)| *r);
-                Some((elo, rank))
-            }
-        };
+        let (home_elo, away_elo) = if row.status == "SCHEDULED" {
+            (
+                current_rankings.get(home_canonical).copied(),
+                current_rankings.get(away_canonical).copied(),
+            )
+        } else {
+            let country_code = league_spec(&row.competition_code).map(|spec| spec.clubelo_country);
+            let existing = existing_pre_match_elo(&row.match_details.0);
+            let existing_home = existing.and_then(|e| e.home_elo);
+            let existing_away = existing.and_then(|e| e.away_elo);
 
-        let home_elo = resolve_team(home_canonical);
-        let away_elo = resolve_team(away_canonical);
+            let mut resolve_side = |canonical: &str, existing_side: Option<f64>| {
+                // Istniejącej wartości z bazy (live) nie nadpisujemy archiwum przy przejściowym błędzie sieci.
+                let side_archive = if existing_side.is_some() {
+                    None
+                } else {
+                    archive_ref
+                };
+                let resolved = resolve_historical_team_elo(
+                    canonical,
+                    country_code,
+                    row.match_date,
+                    &club_histories,
+                    &current_rankings,
+                    side_archive,
+                );
+                if existing_side.is_none()
+                    && resolved.is_none()
+                    && warned_unresolved_teams
+                        .insert((row.competition_code.clone(), canonical.to_string()))
+                {
+                    tracing::warn!(
+                        league = %row.competition_code,
+                        team = canonical,
+                        "ClubElo: brak ratingu Elo zarówno w historii live, jak i w archiwum"
+                    );
+                }
+                resolved
+            };
+
+            (
+                resolve_side(home_canonical, existing_home),
+                resolve_side(away_canonical, existing_away),
+            )
+        };
 
         let fixture = if row.status == "SCHEDULED" {
             let match_day = row.match_date.date_naive();

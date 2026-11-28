@@ -14,7 +14,8 @@ pub use kaggle_csv::{
     KAGGLE_CS2_DATASET, KAGGLE_CS2_FILE,
 };
 pub use pandascore::{
-    parse_pandascore_matches, parse_pandascore_tournament_rosters, sync_pandascore,
+    build_pandascore_past_range, parse_pandascore_matches, parse_pandascore_tournament_rosters,
+    sync_pandascore,
 };
 pub use teams::normalize_cs2_team_name;
 

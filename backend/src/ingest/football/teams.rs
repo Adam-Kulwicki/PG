@@ -258,17 +258,18 @@ const TEAMS: &[TeamEntry] = &[
     // --- La Liga (PD / ESP) ---
     TeamEntry {
         canonical: "Athletic Club",
-        clubelo: "Bilbao",
+        clubelo: "athletic-club",
         aliases: &["Athletic Bilbao", "Ath Bilbao", "Bilbao"],
     },
     TeamEntry {
         canonical: "Club Atlético de Madrid",
-        clubelo: "Atletico",
+        clubelo: "atletico",
         aliases: &[
             "Atletico Madrid",
             "Atlético Madrid",
             "Ath Madrid",
             "Atletico",
+            "Atlético",
         ],
     },
     TeamEntry {
@@ -278,7 +279,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "RC Celta de Vigo",
-        clubelo: "Celta",
+        clubelo: "rc-celta",
         aliases: &["Celta Vigo", "Celta"],
     },
     TeamEntry {
@@ -348,7 +349,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Real Madrid CF",
-        clubelo: "RealMadrid",
+        clubelo: "realmadrid",
         aliases: &["Real Madrid"],
     },
     TeamEntry {
@@ -522,8 +523,8 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Holstein Kiel",
-        clubelo: "HolsteinKiel",
-        aliases: &["Holstein Kiel", "Kiel"],
+        clubelo: "Holstein",
+        aliases: &["Holstein Kiel","HolsteinKiel", "Kiel"],
     },
     TeamEntry {
         canonical: "1. FC Köln",
@@ -616,7 +617,7 @@ const TEAMS: &[TeamEntry] = &[
     // --- Serie A (SA / ITA) ---
     TeamEntry {
         canonical: "Atalanta BC",
-        clubelo: "Atalanta",
+        clubelo: "atalanta",
         aliases: &["Atalanta"],
     },
     TeamEntry {
@@ -696,7 +697,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Parma Calcio 1913",
-        clubelo: "Parma",
+        clubelo: "parma-calcio-1913",
         aliases: &["Parma", "Parma Calcio"],
     },
     TeamEntry {
@@ -706,7 +707,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "US Salernitana 1919",
-        clubelo: "Salernitana",
+        clubelo: "us-salernitana-1919",
         aliases: &["Salernitana"],
     },
     TeamEntry {
@@ -736,7 +737,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Venezia FC",
-        clubelo: "Venezia",
+        clubelo: "venezia-fc",
         aliases: &["Venezia"],
     },
     TeamEntry {
@@ -786,7 +787,7 @@ const TEAMS: &[TeamEntry] = &[
     },
     TeamEntry {
         canonical: "Pisa SC",
-        clubelo: "Pisa",
+        clubelo: "pisa-sc",
         aliases: &["Pisa"],
     },
     // --- Ligue 1 (FL1 / FRA) ---

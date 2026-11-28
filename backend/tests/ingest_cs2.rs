@@ -5,9 +5,9 @@ use backend::{
     ingest::{
         choose_match_date,
         cs2::{
-            extract_csv_bytes, infer_tier_from_filename, normalize_cs2_team_name,
-            parse_kaggle_cs2_csv, parse_kaggle_dataset_version, parse_pandascore_matches,
-            parse_pandascore_tournament_rosters, KAGGLE_CS2_FILE,
+            build_pandascore_past_range, extract_csv_bytes, infer_tier_from_filename,
+            normalize_cs2_team_name, parse_kaggle_cs2_csv, parse_kaggle_dataset_version,
+            parse_pandascore_matches, parse_pandascore_tournament_rosters, KAGGLE_CS2_FILE,
         },
         merge_existing_match, merge_match_details, select_matching_row, ExistingMatchRow,
         IngestedMatch, IngestedParticipant,
@@ -404,6 +404,16 @@ fn deduplicates_and_enriches_pandascore_with_kaggle_csv() {
         }
         other => panic!("oczekiwano MatchDetails::Cs2, otrzymano {other:?}"),
     }
+}
+
+/// Parametr `range[begin_at]` dla PandaScore używa sufiksu `Z` bez `+00:00` i bez nanosekund.
+#[test]
+fn formats_pandascore_past_range_as_clean_utc_seconds() {
+    let sample = dt("2026-11-25T23:31:34.403906165Z");
+    assert_eq!(
+        build_pandascore_past_range(sample),
+        "range[begin_at]=2026-11-11T23:31:34Z,2026-11-25T23:31:34Z"
+    );
 }
 
 /// Zgodność serializacji JSONB `MatchDetails::Cs2` (opcjonalne pola pomijane, gdy puste).

@@ -19,3 +19,7 @@ logs/
 
 # DANE
 data/
+
+# KODY BAJTOWE PYTHONA
+__pycache__/
+*.py[cod]

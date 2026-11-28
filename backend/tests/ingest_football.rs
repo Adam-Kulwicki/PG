@@ -1,14 +1,18 @@
 // tests/ingest_football.rs
+use std::collections::HashMap;
+
 use backend::{
     config::FootballIngestSource,
     ingest::{
         football::{
-            build_pre_match_elo, clubelo_slug, football_data_uk_season_code,
-            football_data_uk_season_url, league_spec, lookup_pre_match_elo_point,
-            normalize_football_team_name, normalize_season_label, parse_clubelo_fixtures_html,
+            build_pre_match_elo, clubelo_slug, compute_league_calibration_offsets,
+            football_data_uk_season_code, football_data_uk_season_url, league_spec,
+            lookup_pre_match_elo_point, median, normalize_football_team_name,
+            normalize_season_label, parse_clubelo_archive_csv, parse_clubelo_fixtures_html,
             parse_clubelo_home_rankings, parse_clubelo_team_page_history, parse_football_data,
             parse_football_data_for_league, parse_football_data_uk_csv,
-            parse_football_data_uk_fixtures_csv, parse_football_season_year, TOP5_LEAGUES,
+            parse_football_data_uk_fixtures_csv, parse_football_season_year,
+            resolve_historical_team_elo, ClubEloArchiveMap, ClubEloPoint, TOP5_LEAGUES,
         },
         merge_existing_match, merge_match_details, short_season_label, winner_from_scores,
         ExistingMatchRow, IngestedMatch, IngestedParticipant,
@@ -213,6 +217,30 @@ fn parses_football_data_uk_csv_and_fixtures() {
     assert!(parse_football_data_uk_csv("", pl, 2026).is_err());
 }
 
+/// `football-data.co.uk`: sezony 2016-2017 i 2017-2018 używają dwucyfrowego roku `DD/MM/YY`
+/// (musi dać `2016`/`2017`, a nie `0016`/`0017` z `chrono` `%Y`).
+#[test]
+fn parses_football_data_uk_two_digit_years_as_20xx() {
+    let csv = "\u{feff}Div,Date,HomeTeam,AwayTeam,FTHG,FTAG\n\
+        E0,12/08/16,Arsenal,Liverpool,3,4\n\
+        E0,11/08/17,Arsenal,Leicester,4,3\n\
+        E0,12/08/201,Chelsea,Burnley,2,3\n";
+    let pl = league_spec("PL").unwrap();
+    let matches = parse_football_data_uk_csv(csv, pl, 2016).unwrap();
+    assert_eq!(matches.len(), 2);
+
+    assert_eq!(matches[0].match_date, dt("2016-08-12T00:00:00Z"));
+    assert_eq!(
+        matches[0].external_ids["football_data_uk"],
+        "E0:2016-08-12:Arsenal FC:Liverpool FC"
+    );
+    assert_eq!(matches[1].match_date, dt("2017-08-11T00:00:00Z"));
+    assert_eq!(
+        matches[1].external_ids["football_data_uk"],
+        "E0:2017-08-11:Arsenal FC:Leicester City FC"
+    );
+}
+
 /// `clubelo.com`: parsowanie osadzonego JSON-a historii Elo, zasada `D - 1`, ranking strony głównej
 /// oraz prawdopodobieństwa `1/X/2` ze strony `/Fixtures`.
 #[test]
@@ -328,6 +356,27 @@ fn normalizes_top5_teams_leagues_and_source_config() {
         "Paris Saint-Germain FC"
     );
     assert_eq!(clubelo_slug("Paris Saint-Germain FC"), Some("ParisSG"));
+    assert_eq!(
+        normalize_football_team_name("Greuther Furth"),
+        "SpVgg Greuther Fürth"
+    );
+    assert_eq!(normalize_football_team_name("Nurnberg"), "1. FC Nürnberg");
+    assert_eq!(
+        normalize_football_team_name("Sp Gijon"),
+        "Real Sporting de Gijón"
+    );
+    assert_eq!(normalize_football_team_name("Nancy"), "AS Nancy-Lorraine");
+    assert_eq!(clubelo_slug("AS Nancy-Lorraine"), Some("Nancy"));
+    assert_eq!(
+        normalize_football_team_name("RC Deportivo La Coruña"),
+        "RC Deportivo de La Coruña"
+    );
+    assert_eq!(normalize_football_team_name("Lille OSC"), "LOSC Lille");
+    assert_eq!(normalize_football_team_name("ES Troyes AC"), "ESTAC Troyes");
+    assert_eq!(
+        normalize_football_team_name("Racing Club de Lens"),
+        "RC Lens"
+    );
 
     assert_eq!(TOP5_LEAGUES.len(), 5);
     assert_eq!(league_spec("PL").unwrap().football_data_uk, "E0");
@@ -492,4 +541,242 @@ fn merges_football_sources_symmetrically() {
     } else {
         panic!("Oczekiwano MatchDetails::Football");
     }
+}
+
+/// Archiwum `EloRatings.csv`: filtracja lig Top 5, twarde odcięcie `[2015-01-01, 2025-06-01]`,
+/// odrzucenie niepoprawnych liczb oraz sortowanie rosnące po dacie.
+#[test]
+fn parses_clubelo_archive_csv_and_filters_leagues_and_dates() {
+    let sample_csv = include_str!("fixtures/clubelo_archive_sample.csv");
+    let archive = parse_clubelo_archive_csv(sample_csv).unwrap();
+
+    // Wiersz spoza Top 5 (`POR`) oraz `NaN`/puste wartości nie mogą trafić do mapy.
+    assert!(!archive.contains_key(&("POR".to_string(), "Porto".to_string())));
+    assert!(!archive.contains_key(&("ENG".to_string(), "Arsenal FC".to_string())));
+
+    // Wiersze sprzed 2015-01-01 i po 2025-06-01 (provisional) są odcięte, a granice są włączne.
+    let man_utd = archive
+        .get(&("ENG".to_string(), "Manchester United FC".to_string()))
+        .unwrap();
+    let expected_dates = [
+        NaiveDate::from_ymd_opt(2015, 1, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2017, 3, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2018, 9, 15).unwrap(),
+        NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(),
+    ];
+    let actual_dates: Vec<NaiveDate> = man_utd.iter().map(|p| p.date).collect();
+    assert_eq!(actual_dates, expected_dates);
+    assert_eq!(man_utd[0].elo, 1870.50);
+    assert_eq!(man_utd[3].elo, 1835.40);
+
+    // Wszystkie 5 lig i znormalizowane aliasy są poprawnie indeksowane po `(country_code, canonical)`.
+    assert!(archive.contains_key(&("GER".to_string(), "FC Bayern München".to_string())));
+    assert!(archive.contains_key(&("GER".to_string(), "SpVgg Greuther Fürth".to_string())));
+    assert!(archive.contains_key(&("GER".to_string(), "1. FC Nürnberg".to_string())));
+    assert!(archive.contains_key(&("ESP".to_string(), "Real Sociedad de Fútbol".to_string())));
+    assert!(archive.contains_key(&("ESP".to_string(), "Real Sporting de Gijón".to_string())));
+    assert!(archive.contains_key(&("ITA".to_string(), "FC Internazionale Milano".to_string())));
+    assert!(archive.contains_key(&("FRA".to_string(), "AC Ajaccio".to_string())));
+    assert!(archive.contains_key(&("FRA".to_string(), "AS Nancy-Lorraine".to_string())));
+    assert!(archive.contains_key(&("FRA".to_string(), "Paris Saint-Germain FC".to_string())));
+
+    // Pusty CSV lub brak wymaganej kolumny zwraca błąd.
+    assert!(parse_clubelo_archive_csv("").is_err());
+    assert!(parse_clubelo_archive_csv("date,club,country\n2020-01-01,Arsenal,ENG\n").is_err());
+}
+
+/// Archiwum `EloRatings.csv`: warunek `D - 1` nie dopuszcza wycieku danych z dnia meczu.
+#[test]
+fn enforces_day_minus_one_for_clubelo_archive_points() {
+    let sample_csv = include_str!("fixtures/clubelo_archive_sample.csv");
+    let archive = parse_clubelo_archive_csv(sample_csv).unwrap();
+    let man_utd = archive
+        .get(&("ENG".to_string(), "Manchester United FC".to_string()))
+        .unwrap();
+
+    // W dniu snapshotu `2017-03-01` mecz musi wziąć poprzedni punkt (`2015-01-01` -> 1870.50).
+    assert_eq!(
+        lookup_pre_match_elo_point(man_utd, dt("2017-03-01T15:00:00Z")),
+        Some(1870.50)
+    );
+    // Dzień po snapshocie (`2017-03-02`) korzysta już z `2017-03-01` (1881.00).
+    assert_eq!(
+        lookup_pre_match_elo_point(man_utd, dt("2017-03-02T15:00:00Z")),
+        Some(1881.00)
+    );
+    // Przed pierwszym snapshotem zwraca `None`.
+    assert_eq!(
+        lookup_pre_match_elo_point(man_utd, dt("2015-01-01T12:00:00Z")),
+        None
+    );
+}
+
+/// Kalibracja offsetu per liga: mediana różnic dla `>= 20` próbek (ignorując punkty spoza okna
+/// i dalej niż ±3 dni) oraz bezpieczny fallback `0.0` przy `< 20` próbkach i wsparcie próbek SQL.
+#[test]
+fn computes_league_calibration_offsets_median_and_fallback() {
+    assert_eq!(median(&[]), None);
+    assert_eq!(median(&[f64::NAN]), None);
+    assert_eq!(median(&[10.0, 30.0, 20.0]), Some(20.0));
+    assert_eq!(median(&[10.0, 40.0, 20.0, 30.0]), Some(25.0));
+
+    let base_date = NaiveDate::from_ymd_opt(2023, 2, 1).unwrap();
+    let mut archive: ClubEloArchiveMap = HashMap::new();
+    let mut club_histories: HashMap<String, Vec<ClubEloPoint>> = HashMap::new();
+
+    // GER: 20 próbek w oknie `[2023-01-01, 2025-06-01]` (różnica ±2 dni, mediana = +45.0)
+    // oraz 2 punkty odrzucone (spoza okna w 2022 oraz odległość 5 dni > 3 dni).
+    let mut ger_arch = Vec::new();
+    let mut ger_live = Vec::new();
+    for i in 0..20_i64 {
+        let arch_date = base_date + chrono::Duration::days(i * 15);
+        let live_date = arch_date + chrono::Duration::days(if i % 2 == 0 { 1 } else { -2 });
+        let diff = if i == 19 { 500.0 } else { 45.0 };
+        ger_arch.push(ClubEloPoint {
+            date: arch_date,
+            elo: 1800.0,
+        });
+        ger_live.push(ClubEloPoint {
+            date: live_date,
+            elo: 1800.0 + diff,
+        });
+    }
+    // Punkt spoza okna kalibracyjnego (2022) i punkt oddalony o 5 dni nie powinny zaburzyć wyniku.
+    ger_arch.push(ClubEloPoint {
+        date: NaiveDate::from_ymd_opt(2022, 6, 1).unwrap(),
+        elo: 1700.0,
+    });
+    ger_live.push(ClubEloPoint {
+        date: NaiveDate::from_ymd_opt(2022, 6, 1).unwrap(),
+        elo: 2500.0,
+    });
+    let far_date = NaiveDate::from_ymd_opt(2024, 12, 1).unwrap();
+    ger_arch.push(ClubEloPoint {
+        date: far_date,
+        elo: 1800.0,
+    });
+    ger_live.push(ClubEloPoint {
+        date: far_date + chrono::Duration::days(5),
+        elo: 2600.0,
+    });
+
+    archive.insert(
+        ("GER".to_string(), "FC Bayern München".to_string()),
+        ger_arch,
+    );
+    club_histories.insert("FC Bayern München".to_string(), ger_live);
+
+    // FRA: tylko 5 próbek live (< 20 -> bez SQL fallbacku dałoby 0.0, ale z fallbackiem >= 20 daje medianę).
+    let mut fra_arch = Vec::new();
+    let mut fra_live = Vec::new();
+    for i in 0..5_i64 {
+        let date = base_date + chrono::Duration::days(i * 15);
+        fra_arch.push(ClubEloPoint { date, elo: 1500.0 });
+        fra_live.push(ClubEloPoint { date, elo: 1580.0 });
+    }
+    archive.insert(("FRA".to_string(), "AC Ajaccio".to_string()), fra_arch);
+    club_histories.insert("AC Ajaccio".to_string(), fra_live);
+
+    // Bez próbek SQL: GER = 45.0, FRA/ENG/ESP/ITA = 0.0.
+    let offsets_no_sql =
+        compute_league_calibration_offsets(&club_histories, &archive, &HashMap::new());
+    assert_eq!(offsets_no_sql.get("GER"), Some(&45.0));
+    assert_eq!(offsets_no_sql.get("FRA"), Some(&0.0));
+    assert_eq!(offsets_no_sql.get("ENG"), Some(&0.0));
+
+    // Z 15 dodatkowymi próbkami SQL dla FRA (łącznie 5 + 15 = 20): mediana wynosi +80.0.
+    let mut fallback_samples = HashMap::new();
+    fallback_samples.insert("FRA".to_string(), vec![80.0; 15]);
+    let offsets_with_sql =
+        compute_league_calibration_offsets(&club_histories, &archive, &fallback_samples);
+    assert_eq!(offsets_with_sql.get("GER"), Some(&45.0));
+    assert_eq!(offsets_with_sql.get("FRA"), Some(&80.0));
+}
+
+/// Priorytet źródeł dla meczów historycznych: live `club_histories` wygrywa z archiwum (zachowując rank),
+/// a fallback archiwalny dodaje offset ligowy i wymusza `rank = None` (bez wycieku bieżącego rankingu).
+#[test]
+fn prioritizes_live_club_histories_over_archive_with_no_rank_leak() {
+    let mut club_histories: HashMap<String, Vec<ClubEloPoint>> = HashMap::new();
+    club_histories.insert(
+        "Arsenal FC".to_string(),
+        vec![ClubEloPoint {
+            date: NaiveDate::from_ymd_opt(2023, 3, 1).unwrap(),
+            elo: 1995.0,
+        }],
+    );
+
+    let mut current_rankings: HashMap<String, (f64, Option<i32>)> = HashMap::new();
+    current_rankings.insert("Arsenal FC".to_string(), (2050.0, Some(1)));
+    current_rankings.insert("AC Ajaccio".to_string(), (1550.0, Some(99)));
+
+    let mut archive: ClubEloArchiveMap = HashMap::new();
+    archive.insert(
+        ("ENG".to_string(), "Arsenal FC".to_string()),
+        vec![ClubEloPoint {
+            date: NaiveDate::from_ymd_opt(2023, 3, 1).unwrap(),
+            elo: 1900.0,
+        }],
+    );
+    archive.insert(
+        ("FRA".to_string(), "AC Ajaccio".to_string()),
+        vec![ClubEloPoint {
+            date: NaiveDate::from_ymd_opt(2022, 9, 1).unwrap(),
+            elo: 1498.40,
+        }],
+    );
+
+    let mut offsets = HashMap::new();
+    offsets.insert("ENG".to_string(), 10.0);
+    offsets.insert("FRA".to_string(), 75.0);
+
+    // 1. Gdy live ma punkt `D - 1`, wygrywa nad archiwum i zachowuje rank z `current_rankings`.
+    assert_eq!(
+        resolve_historical_team_elo(
+            "Arsenal FC",
+            Some("ENG"),
+            dt("2023-03-02T15:00:00Z"),
+            &club_histories,
+            &current_rankings,
+            Some((&archive, &offsets)),
+        ),
+        Some((1995.0, Some(1)))
+    );
+
+    // 2. Gdy live nie ma pokrycia w dacie meczu, fallback bierze archiwum + offset i `rank = None`.
+    assert_eq!(
+        resolve_historical_team_elo(
+            "Arsenal FC",
+            Some("ENG"),
+            dt("2023-03-02T15:00:00Z"),
+            &HashMap::new(),
+            &current_rankings,
+            Some((&archive, &offsets)),
+        ),
+        Some((1910.0, None))
+    );
+    assert_eq!(
+        resolve_historical_team_elo(
+            "AC Ajaccio",
+            Some("FRA"),
+            dt("2022-09-02T19:00:00Z"),
+            &club_histories,
+            &current_rankings,
+            Some((&archive, &offsets)),
+        ),
+        Some((1573.40, None))
+    );
+
+    // 3. Bez przekazanego archiwum (np. ochrona istniejącego wpisu live) nie zwraca fallbacku.
+    assert_eq!(
+        resolve_historical_team_elo(
+            "AC Ajaccio",
+            Some("FRA"),
+            dt("2022-09-02T19:00:00Z"),
+            &club_histories,
+            &current_rankings,
+            None,
+        ),
+        None
+    );
 }

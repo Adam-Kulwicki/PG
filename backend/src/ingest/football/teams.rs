@@ -422,7 +422,13 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "Real Sporting de Gijón",
         clubelo: "Gijon",
-        aliases: &["Sporting Gijon", "Sporting Gijón", "Gijon"],
+        aliases: &[
+            "Sporting Gijon",
+            "Sporting Gijón",
+            "Sp Gijon",
+            "Gijon",
+            "Gijón",
+        ],
     },
     TeamEntry {
         canonical: "Real Oviedo",
@@ -518,12 +524,12 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "Holstein Kiel",
         clubelo: "Holstein",
-        aliases: &["Holstein Kiel", "HolsteinKiel"],
+        aliases: &["Holstein Kiel", "HolsteinKiel", "Kiel"],
     },
     TeamEntry {
         canonical: "1. FC Köln",
         clubelo: "Koeln",
-        aliases: &["FC Koln", "FC Köln", "1. FC Koln", "Koeln", "Koln"],
+        aliases: &["FC Koln", "FC Köln", "1. FC Koln", "Koeln", "Koln", "Köln"],
     },
     TeamEntry {
         canonical: "RB Leipzig",
@@ -538,7 +544,7 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "1. FC Nürnberg",
         clubelo: "Nuernberg",
-        aliases: &["Nuernberg", "Nuremberg", "Nürnberg"],
+        aliases: &["Nuernberg", "Nurnberg", "Nuremberg", "Nürnberg"],
     },
     TeamEntry {
         canonical: "SC Paderborn 07",
@@ -583,12 +589,25 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "SpVgg Greuther Fürth",
         clubelo: "Fuerth",
-        aliases: &["Greuther Fuerth", "Greuther Fürth", "Fuerth"],
+        aliases: &[
+            "Greuther Fuerth",
+            "Greuther Fürth",
+            "Greuther Furth",
+            "Fuerth",
+            "Furth",
+            "Fürth",
+        ],
     },
     TeamEntry {
         canonical: "Fortuna Düsseldorf",
         clubelo: "Duesseldorf",
-        aliases: &["Fortuna Duesseldorf", "Fortuna Dusseldorf", "Duesseldorf"],
+        aliases: &[
+            "Fortuna Duesseldorf",
+            "Fortuna Dusseldorf",
+            "Duesseldorf",
+            "Dusseldorf",
+            "Düsseldorf",
+        ],
     },
     TeamEntry {
         canonical: "FC Ingolstadt 04",
@@ -875,7 +894,12 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "AS Saint-Étienne",
         clubelo: "SaintEtienne",
-        aliases: &["Saint-Etienne", "Saint Etienne", "St Etienne"],
+        aliases: &[
+            "Saint-Etienne",
+            "Saint Etienne",
+            "Saint-Étienne",
+            "St Etienne",
+        ],
     },
     TeamEntry {
         canonical: "RC Strasbourg Alsace",
@@ -931,6 +955,11 @@ const TEAMS: &[TeamEntry] = &[
         canonical: "En Avant Guingamp",
         clubelo: "Guingamp",
         aliases: &["Guingamp"],
+    },
+    TeamEntry {
+        canonical: "AS Nancy-Lorraine",
+        clubelo: "Nancy",
+        aliases: &["Nancy", "AS Nancy"],
     },
     TeamEntry {
         canonical: "Nîmes Olympique",

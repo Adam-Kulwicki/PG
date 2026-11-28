@@ -2,9 +2,10 @@
 //! Piłka nożna (Top 5 lig Europy):
 //! - **`football-data.co.uk`** — historia i bieżący sezon CSV (xG, strzały, strzały celne, rożne, faule, kartki, HT) oraz fallback terminarza `fixtures.csv`,
 //! - **Football-Data.org v4** *(opcjonalnie z kluczem API)* — dokładne `utcDate`, statusy `LIVE`/`POSTPONED`/`CANCELLED` i numery kolejek,
-//! - **`clubelo.com`** — przedmeczowe ratingi Elo (`D - 1`) oraz prawdopodobieństwa `/Fixtures` dla meczów `SCHEDULED`.
+//! - **`clubelo.com`** — przedmeczowe ratingi Elo (`D - 1`), prawdopodobieństwa `/Fixtures` dla meczów `SCHEDULED` oraz skalibrowany backfill archiwalny `EloRatings.csv`.
 
 pub mod clubelo;
+pub mod clubelo_archive;
 pub mod football_data_uk;
 pub mod teams;
 
@@ -26,6 +27,12 @@ use crate::{
 pub use clubelo::{
     build_pre_match_elo, enrich_matches_with_clubelo, lookup_pre_match_elo_point,
     parse_clubelo_fixtures_html, parse_clubelo_home_rankings, parse_clubelo_team_page_history,
+    resolve_historical_team_elo, ClubEloPoint,
+};
+pub use clubelo_archive::{
+    collect_live_calibration_samples, compute_league_calibration_offsets,
+    load_or_fetch_clubelo_archive, median, parse_clubelo_archive_csv, ClubEloArchiveMap,
+    CLUBELO_ARCHIVE_CACHE_PATH, CLUBELO_ARCHIVE_MIRROR_URL, CLUBELO_ARCHIVE_PRIMARY_URL,
 };
 pub use football_data_uk::{
     football_data_uk_season_code, football_data_uk_season_url, parse_football_data_uk_csv,

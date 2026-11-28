@@ -524,7 +524,7 @@ const TEAMS: &[TeamEntry] = &[
     TeamEntry {
         canonical: "Holstein Kiel",
         clubelo: "Holstein",
-        aliases: &["Holstein Kiel","HolsteinKiel", "Kiel"],
+        aliases: &["Holstein Kiel", "HolsteinKiel", "Kiel"],
     },
     TeamEntry {
         canonical: "1. FC Köln",

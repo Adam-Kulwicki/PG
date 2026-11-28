@@ -650,6 +650,7 @@ pub async fn enrich_matches_with_clubelo(
                     tracing::warn!(
                         league = %row.competition_code,
                         team = canonical,
+                        match_date = %row.match_date,
                         "ClubElo: brak ratingu Elo zarówno w historii live, jak i w archiwum"
                     );
                 }

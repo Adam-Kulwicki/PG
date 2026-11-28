@@ -217,6 +217,30 @@ fn parses_football_data_uk_csv_and_fixtures() {
     assert!(parse_football_data_uk_csv("", pl, 2026).is_err());
 }
 
+/// `football-data.co.uk`: sezony 2016-2017 i 2017-2018 używają dwucyfrowego roku `DD/MM/YY`
+/// (musi dać `2016`/`2017`, a nie `0016`/`0017` z `chrono` `%Y`).
+#[test]
+fn parses_football_data_uk_two_digit_years_as_20xx() {
+    let csv = "\u{feff}Div,Date,HomeTeam,AwayTeam,FTHG,FTAG\n\
+        E0,12/08/16,Arsenal,Liverpool,3,4\n\
+        E0,11/08/17,Arsenal,Leicester,4,3\n\
+        E0,12/08/201,Chelsea,Burnley,2,3\n";
+    let pl = league_spec("PL").unwrap();
+    let matches = parse_football_data_uk_csv(csv, pl, 2016).unwrap();
+    assert_eq!(matches.len(), 2);
+
+    assert_eq!(matches[0].match_date, dt("2016-08-12T00:00:00Z"));
+    assert_eq!(
+        matches[0].external_ids["football_data_uk"],
+        "E0:2016-08-12:Arsenal FC:Liverpool FC"
+    );
+    assert_eq!(matches[1].match_date, dt("2017-08-11T00:00:00Z"));
+    assert_eq!(
+        matches[1].external_ids["football_data_uk"],
+        "E0:2017-08-11:Arsenal FC:Leicester City FC"
+    );
+}
+
 /// `clubelo.com`: parsowanie osadzonego JSON-a historii Elo, zasada `D - 1`, ranking strony głównej
 /// oraz prawdopodobieństwa `1/X/2` ze strony `/Fixtures`.
 #[test]

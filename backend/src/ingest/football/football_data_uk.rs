@@ -86,9 +86,15 @@ fn col_f64(fields: &[&str], idx: &HashMap<String, usize>, name: &str) -> Option<
 
 /// Parsuje datę `DD/MM/YYYY` (lub starsze `DD/MM/YY`) oraz opcjonalną godzinę `HH:MM` (UTC).
 fn parse_fduk_datetime(date_str: &str, time_str: Option<&str>) -> Option<DateTime<Utc>> {
-    let date = NaiveDate::parse_from_str(date_str.trim(), "%d/%m/%Y")
-        .or_else(|_| NaiveDate::parse_from_str(date_str.trim(), "%d/%m/%y"))
-        .ok()?;
+    let trimmed = date_str.trim();
+    // W `chrono` format `%Y` akceptuje też rok dwucyfrowy i zapisuje go jako `00XX` zamiast `20XX`,
+    // dlatego dobieramy format jawnie na podstawie długości ostatniego członu daty.
+    let date_format = match trimmed.rsplit('/').next().map(str::len) {
+        Some(2) => "%d/%m/%y",
+        Some(4) => "%d/%m/%Y",
+        _ => return None,
+    };
+    let date = NaiveDate::parse_from_str(trimmed, date_format).ok()?;
     let time = time_str
         .and_then(|t| NaiveTime::parse_from_str(t.trim(), "%H:%M").ok())
         .unwrap_or(NaiveTime::MIN);
